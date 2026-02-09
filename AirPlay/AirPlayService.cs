@@ -18,8 +18,10 @@ namespace AirPlay
         private readonly DumpConfig _dConfig;
 
         private AudioOutputService _audioOutput;
+        private VideoOutputService _videoOutput;
         private List<byte> _audiobuf;
         private readonly object _audioOutputLock = new object();
+        private readonly object _videoOutputLock = new object();
 
         public AirPlayService(IAirPlayReceiver airPlayReceiver, IOptions<DumpConfig> dConfig)
         {
@@ -94,6 +96,19 @@ namespace AirPlay
                 }
             }
 
+            // Initialize video output (named pipe for external player)
+            try
+            {
+                _videoOutput = new VideoOutputService();
+                _videoOutput.Initialize();
+                Console.WriteLine("Video output initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to initialize video output: {ex.Message}");
+                Console.WriteLine("Continuing without video output...");
+            }
+
             await _airPlayReceiver.StartListeners(cancellationToken);
             await _airPlayReceiver.StartMdnsAsync().ConfigureAwait(false);
 
@@ -111,10 +126,15 @@ namespace AirPlay
                 }
             };
 
-            // DUMP H264 VIDEO
+            // H264 VIDEO OUTPUT
             _airPlayReceiver.OnH264DataReceived += (s, e) =>
             {
-                // DO SOMETHING WITH VIDEO DATA..
+                // Send H264 data to video output pipe
+                lock (_videoOutputLock)
+                {
+                    _videoOutput?.WriteFrame(e);
+                }
+
 #if DUMP
                 using (FileStream writer = new FileStream($"{bPath}dump.h264", FileMode.Append))
                 {
@@ -143,6 +163,9 @@ namespace AirPlay
             _audioOutput?.Dispose();
             _audioOutput = null;
 
+            _videoOutput?.Dispose();
+            _videoOutput = null;
+
 #if DUMP
             // DUMP WAV AUDIO
             var bPath = _dConfig.Path;
@@ -164,6 +187,9 @@ namespace AirPlay
         {
             _audioOutput?.Dispose();
             _audioOutput = null;
+
+            _videoOutput?.Dispose();
+            _videoOutput = null;
 
             if (_airPlayReceiver is IDisposable disposable)
             {
