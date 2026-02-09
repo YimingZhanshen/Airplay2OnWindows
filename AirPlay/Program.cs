@@ -61,7 +61,6 @@ namespace AirPlay
                     services.AddOptions();
 
                     services.Configure<AirPlayReceiverConfig>(hostContext.Configuration.GetSection("AirPlayReceiver"));
-                    services.Configure<CodecLibrariesConfig>(hostContext.Configuration.GetSection("CodecLibraries"));
                     services.Configure<DumpConfig>(hostContext.Configuration.GetSection("Dump"));
 
                     services.AddSingleton<IAirPlayReceiver, AirPlayReceiver>();

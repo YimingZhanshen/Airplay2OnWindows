@@ -33,14 +33,12 @@ namespace AirPlay.Listeners
         private RaopBuffer _raopBuffer;
         private Socket _cSocket;
 
-        private readonly CodecLibrariesConfig _clConfig;
         private readonly DumpConfig _dConfig;
 
-        public AudioListener(IRtspReceiver receiver, string sessionId, ushort cport, ushort dport, CodecLibrariesConfig clConfig, DumpConfig dConfig) : base(cport, dport)
+        public AudioListener(IRtspReceiver receiver, string sessionId, ushort cport, ushort dport, DumpConfig dConfig) : base(cport, dport)
         {
             _receiver = receiver ?? throw new ArgumentNullException(nameof(receiver));
             _sessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
-            _clConfig = clConfig ?? throw new ArgumentNullException(nameof(clConfig));
             _dConfig = dConfig ?? throw new ArgumentNullException(nameof(dConfig));
 
             _raopBuffer = RaopBufferInit();
@@ -171,11 +169,19 @@ namespace AirPlay.Listeners
 
                     //if(_raopBuffer.LastSeqNum - _raopBuffer.FirstSeqNum > (RAOP_BUFFER_LENGTH / 8))
                     //{
-                        // Dequeue all frames in queue
-                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
+                        // Dequeue frames from buffer, limit to prevent flooding the output queue
+                        int dequeueCount = 0;
+                        const int maxDequeuePerPacket = 10;
+                        while (dequeueCount < maxDequeuePerPacket &&
+                               (audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
                         {
+                            dequeueCount++;
+
+                            if (audiobuf.Length == 0 || audiobuflen <= 0)
+                                continue;
+
                             var pcmData = new PcmData();
-                            pcmData.Length = 960;
+                            pcmData.Length = audiobuflen;
                             pcmData.Data = audiobuf;
 
                             pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
@@ -200,6 +206,7 @@ namespace AirPlay.Listeners
         public Task FlushAsync(int nextSequence)
         {
             RaopBufferFlush(_raopBuffer, nextSequence);
+            _receiver.OnAudioFlush();
             return Task.CompletedTask;
         }
 
@@ -374,25 +381,17 @@ namespace AirPlay.Listeners
                 /* Check how much we have space left in the buffer */
                 if (buflen < RAOP_BUFFER_LENGTH)
                 {
-                    /* Return nothing and hope resend gets on time */
-                    length = entry.AudioBufferSize;
-                    Array.Fill<byte>(entry.AudioBuffer, 0, 0, length);
-
-                    return entry.AudioBuffer;
+                    /* Entry not yet available, wait for resend - return null to stop dequeue loop */
+                    return null;
                 }
-                /* Risk of buffer overrun, return empty buffer */
-                return Array.Empty<byte>();
+
+                /* Risk of buffer overrun, skip this entry and advance to prevent getting stuck */
+                entry.AudioBufferLen = 0;
+                raop_buffer.Entries[raop_buffer.FirstSeqNum % RAOP_BUFFER_LENGTH] = entry;
+                raop_buffer.FirstSeqNum += 1;
+                return null;
             }
 
-            /* Update buffer and validate entry */
-            if (!entry.Available)
-            {
-                /* Return an empty audio buffer to skip audio */
-                length = entry.AudioBufferSize;
-                Array.Fill<byte>(entry.AudioBuffer, 0, 0, length);
-
-                return entry.AudioBuffer;
-            }
             entry.Available = false;
 
             /* Return entry audio buffer */
@@ -490,7 +489,7 @@ namespace AirPlay.Listeners
                 var bitDepth = 16;
                 var sampleRate = 44100;
 
-                _decoder = new ALACDecoder(_clConfig.ALACLibPath);
+                _decoder = new ALACDecoder();
                 _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
             }
             else if (audioFormat == AudioFormat.AAC)
@@ -503,7 +502,7 @@ namespace AirPlay.Listeners
                 var bitDepth = 16;
                 var sampleRate = 44100;
 
-                _decoder = new AACDecoder(_clConfig.AACLibPath, TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_MAIN, 1);
+                _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_MAIN, 1);
                 _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
             }
             else if(audioFormat == AudioFormat.AAC_ELD)
@@ -516,7 +515,7 @@ namespace AirPlay.Listeners
                 var bitDepth = 16;
                 var sampleRate = 44100;
 
-                _decoder = new AACDecoder(_clConfig.AACLibPath, TransportType.TT_MP4_RAW, AudioObjectType.AOT_ER_AAC_ELD, 1);
+                _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_ER_AAC_ELD, 1);
                 _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
             }
             else

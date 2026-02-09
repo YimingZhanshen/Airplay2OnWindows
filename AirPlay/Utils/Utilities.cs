@@ -24,9 +24,8 @@ namespace AirPlay.Utils
 
         public static byte[] Hash(byte[] first, byte[] last)
         {
-            var sha512 = new SHA512CryptoServiceProvider();
             byte[] combined = first.Concat(last).ToArray();
-            byte[] hashed = sha512.ComputeHash(combined);
+            byte[] hashed = SHA512.HashData(combined);
             return hashed;
         }
 
@@ -57,9 +56,9 @@ namespace AirPlay.Utils
 
         public static byte[] WriteWavHeader(ushort numchannels, uint sampleRate, ushort bitsPerSample, uint tot)
         {
-            var stream = new MemoryStream();
+            using var stream = new MemoryStream();
+            using BinaryWriter bwl = new BinaryWriter(stream);
 
-            BinaryWriter bwl = new BinaryWriter(stream);
             bwl.Write(new char[4] { 'R', 'I', 'F', 'F' });
             bwl.Write(tot + 38);
             bwl.Write(new char[8] { 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ' });
