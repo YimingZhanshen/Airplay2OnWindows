@@ -17,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="curve25519-pcl" Version="1.0.1" />
+    <PackageReference Include="fdk-aac" Version="2.0.3" />
     <PackageReference Include="LibALAC" Version="1.0.7" />
     <PackageReference Include="Makaretu.Dns.Multicast" Version="0.27.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />

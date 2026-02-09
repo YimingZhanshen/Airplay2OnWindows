@@ -524,15 +524,35 @@ namespace AirPlay.Listeners
             else if(audioFormat == AudioFormat.AAC_ELD)
             {
                 // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
-                // (AAC-ELD -> PCM)
+                // (AAC-ELD -> PCM) using FDK AAC native decoder
 
                 var frameLength = 480;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
 
-                _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_ER_AAC_ELD, 1);
-                _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                try
+                {
+                    var fdkDecoder = new Decoders.Implementations.FdkAacEldDecoder();
+                    var ret = fdkDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                    if (ret == 0)
+                    {
+                        _decoder = fdkDecoder;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"FDK AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
+                        fdkDecoder.Dispose();
+                        _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                        _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"FDK AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
+                    _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                    _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                }
             }
             else
             {
