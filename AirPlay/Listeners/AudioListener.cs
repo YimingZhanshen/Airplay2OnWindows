@@ -230,7 +230,8 @@ namespace AirPlay.Listeners
 		        var entry = raop_buffer.Entries[i];
                 entry.AudioBufferSize = audio_buffer_size;
 		        entry.AudioBufferLen = 0;
-		        entry.AudioBuffer = (byte[]) raop_buffer.Buffer.Skip(i * audio_buffer_size).Take(audio_buffer_size).ToArray();
+		        entry.AudioBuffer = new byte[audio_buffer_size];
+		        Array.Copy(raop_buffer.Buffer, i * audio_buffer_size, entry.AudioBuffer, 0, audio_buffer_size);
 
                 raop_buffer.Entries[i] = entry;
             }
