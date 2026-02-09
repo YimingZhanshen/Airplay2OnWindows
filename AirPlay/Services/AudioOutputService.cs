@@ -11,6 +11,10 @@ namespace AirPlay.Services
     /// </summary>
     public class AudioOutputService : IDisposable
     {
+        private const int COM_CLEANUP_DELAY_MS = 200;
+        private const int PREBUFFER_PACKETS = 50;
+        private const int LOG_FREQUENCY_PACKETS = 50000;
+
         private IWavePlayer _waveOut;
         private StreamingWaveProvider _streamProvider;
         private readonly object _lock = new object();
@@ -18,7 +22,6 @@ namespace AirPlay.Services
         private int _sampleCount = 0;
         private bool _isPlaying = false;
         private bool _initialized = false;
-        private int _prebufferPackets;
         private WaveFormat _waveFormat;
         private bool _needsReinit = false;
 
@@ -48,11 +51,8 @@ namespace AirPlay.Services
                 // gets silence, and may terminate.
                 _initialized = false;
 
-                // Prebuffer 50 packets (~1 second of audio) before calling Init()
-                _prebufferPackets = 50;
-
                 Console.WriteLine($"Audio device created: {_waveFormat.SampleRate}Hz, {_waveFormat.BitsPerSample}-bit, {_waveFormat.Channels} channels");
-                Console.WriteLine($"  Will call Init() after prebuffering {_prebufferPackets} packets");
+                Console.WriteLine($"  Will call Init() after prebuffering {PREBUFFER_PACKETS} packets");
             }
         }
 
@@ -112,7 +112,7 @@ namespace AirPlay.Services
             }
 
             // Wait outside the lock for COM cleanup
-            Thread.Sleep(200);
+            Thread.Sleep(COM_CLEANUP_DELAY_MS);
 
             lock (_lock)
             {
@@ -120,7 +120,7 @@ namespace AirPlay.Services
                 {
                     _waveOut = new DirectSoundOut(100);
                     _waveOut.PlaybackStopped += OnPlaybackStopped;
-                    Console.WriteLine($"Audio device recreated for new track, waiting for {_prebufferPackets} packets before Init()...");
+                    Console.WriteLine($"Audio device recreated for new track, waiting for {PREBUFFER_PACKETS} packets before Init()...");
                 }
                 catch (Exception ex)
                 {
@@ -149,7 +149,7 @@ namespace AirPlay.Services
                     _sampleCount++;
 
                     // Initialize DirectSound AFTER prebuffering
-                    if (!_initialized && _sampleCount >= _prebufferPackets)
+                    if (!_initialized && _sampleCount >= PREBUFFER_PACKETS)
                     {
                         Console.WriteLine($"Prebuffered {_streamProvider.QueuedBuffers} packets, calling Init()...");
                         _waveOut.Init(_streamProvider);
@@ -165,7 +165,7 @@ namespace AirPlay.Services
                     }
 
                     // Log status periodically
-                    if (_sampleCount % 50000 == 0)
+                    if (_sampleCount % LOG_FREQUENCY_PACKETS == 0)
                     {
                         var state = _waveOut.PlaybackState;
                         var queued = _streamProvider.QueuedBuffers;
@@ -194,7 +194,7 @@ namespace AirPlay.Services
                 }
                 catch { }
 
-                Thread.Sleep(200);
+                Thread.Sleep(COM_CLEANUP_DELAY_MS);
 
                 try
                 {
