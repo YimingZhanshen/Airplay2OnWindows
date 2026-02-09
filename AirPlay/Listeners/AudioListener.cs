@@ -103,7 +103,9 @@ namespace AirPlay.Listeners
                             */
 
                         mem.Position = 8;
-                        ulong ntp_time = (((ulong)reader.ReadInt32()) * 1000000UL) + ((((ulong)reader.ReadInt32()) * 1000000UL) / Int32.MaxValue);
+                        uint ntp_seconds = (uint)reader.ReadInt32();
+                        uint ntp_fraction = (uint)reader.ReadInt32();
+                        ulong ntp_time = ((ulong)ntp_seconds * 1000000UL) + (((ulong)ntp_fraction * 1000000UL) >> 32);
                         uint rtp_timestamp = (uint)((packet[4] << 24) | (packet[5] << 16) | (packet[6] << 8) | packet[7]);
                         uint next_timestamp = (uint)((packet[16] << 24) | (packet[17] << 16) | (packet[18] << 8) | packet[19]);
 
@@ -169,14 +171,9 @@ namespace AirPlay.Listeners
 
                     //if(_raopBuffer.LastSeqNum - _raopBuffer.FirstSeqNum > (RAOP_BUFFER_LENGTH / 8))
                     //{
-                        // Dequeue frames from buffer, limit to prevent flooding the output queue
-                        int dequeueCount = 0;
-                        const int maxDequeuePerPacket = 10;
-                        while (dequeueCount < maxDequeuePerPacket &&
-                               (audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
+                        // Dequeue all available frames from buffer
+                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
                         {
-                            dequeueCount++;
-
                             if (audiobuf.Length == 0 || audiobuflen <= 0)
                                 continue;
 
@@ -197,7 +194,7 @@ namespace AirPlay.Listeners
                     }
                 }
 
-                packet = new byte[RAOP_PACKET_LENGTH];
+                Array.Clear(packet, 0, packet.Length);
             } while (!cancellationToken.IsCancellationRequested);
 
             Console.WriteLine("Closing audio data socket..");
@@ -233,7 +230,7 @@ namespace AirPlay.Listeners
 		        var entry = raop_buffer.Entries[i];
                 entry.AudioBufferSize = audio_buffer_size;
 		        entry.AudioBufferLen = 0;
-		        entry.AudioBuffer = (byte[]) raop_buffer.Buffer.Skip(i).Take(audio_buffer_size).ToArray();
+		        entry.AudioBuffer = (byte[]) raop_buffer.Buffer.Skip(i * audio_buffer_size).Take(audio_buffer_size).ToArray();
 
                 raop_buffer.Entries[i] = entry;
             }
@@ -402,7 +399,9 @@ namespace AirPlay.Listeners
             raop_buffer.Entries[raop_buffer.FirstSeqNum % RAOP_BUFFER_LENGTH] = entry;
             raop_buffer.FirstSeqNum += 1;
 
-            return entry.AudioBuffer.Take(length).ToArray();
+            var result = new byte[length];
+            Array.Copy(entry.AudioBuffer, 0, result, 0, length);
+            return result;
         }
 
         private void RaopBufferFlush(RaopBuffer raop_buffer, int next_seq)
