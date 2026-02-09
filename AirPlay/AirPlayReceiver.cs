@@ -29,17 +29,16 @@ namespace AirPlay
         private readonly ushort _airPlayPort;
         private readonly string _deviceId;
 
-        public AirPlayReceiver(IOptions<AirPlayReceiverConfig> aprConfig, IOptions<CodecLibrariesConfig> codecConfig, IOptions<DumpConfig> dumpConfig)
+        public AirPlayReceiver(IOptions<AirPlayReceiverConfig> aprConfig, IOptions<DumpConfig> dumpConfig)
         {
             _airTunesPort = aprConfig?.Value?.AirTunesPort ?? 5000;
             _airPlayPort = aprConfig?.Value?.AirPlayPort ?? 7000;
             _deviceId = aprConfig?.Value?.DeviceMacAddress ?? "11:22:33:44:55:66";
             _instance = aprConfig?.Value?.Instance ?? throw new ArgumentNullException("apr.instance");
 
-            var clConfig = codecConfig?.Value ?? throw new ArgumentNullException(nameof(codecConfig));
             var dConfig = dumpConfig?.Value ?? throw new ArgumentNullException(nameof(dumpConfig));
 
-            _airTunesListener = new AirTunesListener(this, _airTunesPort, _airPlayPort, clConfig, dConfig);
+            _airTunesListener = new AirTunesListener(this, _airTunesPort, _airPlayPort, dConfig);
         }
 
         public async Task StartListeners(CancellationToken cancellationToken)

@@ -17,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="curve25519-pcl" Version="1.0.1" />
+    <PackageReference Include="LibALAC" Version="1.0.7" />
     <PackageReference Include="Makaretu.Dns.Multicast" Version="0.27.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
@@ -25,6 +26,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
     <PackageReference Include="Chaos.NaCl.Core" Version="1.0.0" />
+    <PackageReference Include="SharpJaad.AAC" Version="0.0.6" />
   </ItemGroup>
 
   <ItemGroup>

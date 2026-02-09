@@ -1,78 +1,55 @@
 ﻿/*  
- * I have mapped only used methods.
- * This code does not have all 'AAC Decoder' functionality
+ * AAC Decoder using SharpJaad.AAC managed library.
+ * No native library dependencies required.
  */
 
 using System;
-using System.IO;
 using System.Runtime.InteropServices;
 using AirPlay.Models.Enums;
-using AirPlay.Utils;
+using SharpJaad.AAC;
 
 namespace AirPlay
 {
-    public unsafe class AACDecoder : IDecoder, IDisposable
+    public class AACDecoder : IDecoder
     {
-        private IntPtr _handle;
-        private IntPtr _decoder;
+        private Decoder _jaadDecoder;
+        private DecoderConfig _decoderConfig;
+        private SampleBuffer _outputBuffer = new SampleBuffer();
 
-        private delegate IntPtr aacDecoder_Open(int transportFmt, uint nrOfLayers);
-        private delegate AACDecoderError aacDecoder_ConfigRaw(IntPtr decoder, IntPtr[] conf, uint *length);
-        private delegate AACDecoderError aacDecoder_Fill(IntPtr decoder, IntPtr[] pBuffer, uint *bufferSize, uint *pBytesValid);
-        private delegate AACDecoderError aacDecoder_DecodeFrame(IntPtr decoder, IntPtr output, int pcm_pkt_size, uint flags);
-        private delegate IntPtr aacDecoder_Close(IntPtr decoder);
+        private int _pcmPktSize;
 
-        private aacDecoder_Open _aacDecoder_Open;
-        private aacDecoder_ConfigRaw _aacDecoder_ConfigRaw;
-        private aacDecoder_Fill _aacDecoder_Fill;
-        private aacDecoder_DecodeFrame _aacDecoder_DecodeFrame;
-        private aacDecoder_Close _aacDecoder_Close;
+        public AudioFormat Type => AudioFormat.AAC;
 
-        private AudioObjectType _audioObjectType;
-
-        public int _pcmPktSize;
-
-        public AudioFormat Type => _audioObjectType == AudioObjectType.AOT_ER_AAC_ELD ? AudioFormat.AAC_ELD : AudioFormat.AAC;
-
-        public AACDecoder(string libraryPath, TransportType transportFmt, AudioObjectType audioObjectType, uint nrOfLayers)
+        public AACDecoder(TransportType transportFmt, AudioObjectType audioObjectType, uint nrOfLayers)
         {
-            if (!File.Exists(libraryPath))
+            _decoderConfig = new DecoderConfig();
+            if (GetProfileFromAudioObjectType(audioObjectType) is Profile profile)
             {
-                throw new IOException("Library not found.");
+                _decoderConfig.SetProfile(profile);
             }
-
-            // Open library
-            _handle = LibraryLoader.DlOpen(libraryPath, 0);
-
-            // Get function pointers symbols
-            IntPtr symAacDecoder_Open = LibraryLoader.DlSym(_handle, "aacDecoder_Open");
-            IntPtr symAacDecoder_ConfigRaw = LibraryLoader.DlSym(_handle, "aacDecoder_ConfigRaw");
-            IntPtr sysAacDecoder_GetStreamInfo = LibraryLoader.DlSym(_handle, "aacDecoder_GetStreamInfo");
-            IntPtr sysAacDecoder_Fill = LibraryLoader.DlSym(_handle, "aacDecoder_Fill");
-            IntPtr sysAacDecoder_DecodeFrame = LibraryLoader.DlSym(_handle, "aacDecoder_DecodeFrame");
-            IntPtr sysAacDecoder_Close = LibraryLoader.DlSym(_handle, "aacDecoder_Close");
-
-            // Get delegates for the function pointers
-            _aacDecoder_Open = Marshal.GetDelegateForFunctionPointer<aacDecoder_Open>(symAacDecoder_Open);
-            _aacDecoder_ConfigRaw = Marshal.GetDelegateForFunctionPointer<aacDecoder_ConfigRaw>(symAacDecoder_ConfigRaw);
-            _aacDecoder_Fill = Marshal.GetDelegateForFunctionPointer<aacDecoder_Fill>(sysAacDecoder_Fill);
-            _aacDecoder_DecodeFrame = Marshal.GetDelegateForFunctionPointer<aacDecoder_DecodeFrame>(sysAacDecoder_DecodeFrame);
-            _aacDecoder_Close = Marshal.GetDelegateForFunctionPointer<aacDecoder_Close>(sysAacDecoder_Close);
-
-            _decoder = _aacDecoder_Open((int)transportFmt, nrOfLayers);
-
-            _audioObjectType = audioObjectType;
+            else
+            {
+                throw new NotSupportedException($"AudioObjectType {audioObjectType} is not supported.");
+            }
         }
 
         public int Config(int sampleRate, int channels, int bitDepth, int frameLength)
         {
             _pcmPktSize = frameLength * channels * bitDepth / 8;
 
-            var frequencyIndex = Enum.Parse<FrequencyIndex>($"F_{sampleRate}", true);
+            var jaadSampleRate = SampleFrequencyExtensions.FromFrequency(sampleRate);
+            _decoderConfig.SetSampleFrequency(jaadSampleRate);
+            if (GetChannelConfigurationFromChannelCount(channels) is ChannelConfiguration channelConfig)
+            {
+                _decoderConfig.SetChannelConfiguration(channelConfig);
+            }
+            else
+            {
+                throw new NotSupportedException($"Channel count {channels} is not supported.");
+            }
 
-            var config = AudioSpecificConfig((int)_audioObjectType, (int)frequencyIndex, channels, bitDepth);
-
-            return Config(config);
+            _jaadDecoder = new Decoder(_decoderConfig);
+            return 0;
         }
 
         public int GetOutputStreamLength()
@@ -80,120 +57,58 @@ namespace AirPlay
             return _pcmPktSize;
         }
 
-        public int DecodeFrame(byte[] input, ref byte[] output, int pcm_pkt_size)
+        public int DecodeFrame(byte[] input, ref byte[] output, int length)
         {
-            AACDecoderError ret;
-            uint pkt_size = (uint)input.Length;
-            uint valid_size = (uint)input.Length;
-            uint fdk_flags = 0;
-
-            ret = Fill(_decoder, input, pkt_size, valid_size);
-            if(ret != AACDecoderError.AAC_DEC_OK)
+            if (_jaadDecoder == null)
             {
-                Console.WriteLine($"aacDecoder_Fill error: {ret}");
-                return (int)ret;
+                throw new InvalidOperationException("Decoder is not configured. Call Config() before decoding.");
             }
-
-            ret = InternalDecodeFrame(ref output, pcm_pkt_size, fdk_flags);
-            if (ret != AACDecoderError.AAC_DEC_OK)
+            _jaadDecoder.DecodeFrame(input, _outputBuffer);
+            var data = _outputBuffer.Data;
+            if (data != null && data.Length > 0)
             {
-                Console.WriteLine($"aacDecoder_DecodeFrame error: {ret}");
-                return (int)ret;
+                var copyLen = Math.Min(data.Length, output.Length);
+                Array.Copy(data, output, copyLen);
             }
-
-            return (int)ret;
+            return 0;
         }
 
-        public void Dispose()
+        private static Profile? GetProfileFromAudioObjectType(AudioObjectType audioObjectType)
         {
-            _aacDecoder_Close(_decoder);
-            LibraryLoader.DlClose(_handle);
-            Marshal.FreeBSTR(_handle);
-        }
-
-        private AACDecoderError Fill(IntPtr decoder, byte[] pBuffer, uint bufferSize, uint pBytesValid)
-        {
-            var size = Marshal.SizeOf(pBuffer[0]) * pBuffer.Length;
-            var ptr = Marshal.AllocHGlobal(size);
-            Marshal.Copy(pBuffer, 0, ptr, pBuffer.Length);
-
-            var byteArrayPtr = new IntPtr[]
+            return audioObjectType switch
             {
-                ptr
+                AudioObjectType.AOT_AAC_MAIN => Profile.AAC_MAIN,
+                AudioObjectType.AOT_AAC_LC => Profile.AAC_LC,
+                AudioObjectType.AOT_AAC_SSR => Profile.AAC_SSR,
+                AudioObjectType.AOT_AAC_LTP => Profile.AAC_LTP,
+                AudioObjectType.AOT_SBR => Profile.AAC_SBR,
+                AudioObjectType.AOT_AAC_SCAL => Profile.AAC_SCALABLE,
+                AudioObjectType.AOT_TWIN_VQ => Profile.TWIN_VQ,
+                AudioObjectType.AOT_ER_AAC_LC => Profile.ER_AAC_LC,
+                AudioObjectType.AOT_ER_AAC_LTP => Profile.ER_AAC_LTP,
+                AudioObjectType.AOT_ER_AAC_SCAL => Profile.ER_AAC_SCALABLE,
+                AudioObjectType.AOT_ER_TWIN_VQ => Profile.ER_TWIN_VQ,
+                AudioObjectType.AOT_ER_BSAC => Profile.ER_BSAC,
+                AudioObjectType.AOT_ER_AAC_LD => Profile.ER_AAC_LD,
+                _ => null
             };
-
-            var res = _aacDecoder_Fill(decoder, byteArrayPtr, &bufferSize, &pBytesValid);
-
-            return res;
         }
 
-        private AACDecoderError InternalDecodeFrame(ref byte[] output, int pcm_pkt_size, uint flags)
+        private static ChannelConfiguration? GetChannelConfigurationFromChannelCount(int channels)
         {
-            int size = Marshal.SizeOf(output[0]) * output.Length;
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-
-            AACDecoderError res;
-            try
+            return channels switch
             {
-                res = _aacDecoder_DecodeFrame(_decoder, ptr, pcm_pkt_size, flags);
-                if (res == AACDecoderError.AAC_DEC_OK)
-                {
-                    Marshal.Copy(ptr, output, 0, pcm_pkt_size);
-                }
-            }
-            finally
-            {
-                if (ptr != IntPtr.Zero)
-                    Marshal.FreeHGlobal(ptr);
-            }
-
-            return res;
-        }
-
-        private byte[] AudioSpecificConfig(int audioObjectType, int frequenceIndex, int channels, int bitDepth)
-        {
-            string bin;
-            if (audioObjectType >= 31)
-            {
-                bin = Convert.ToString(31, 2).PadLeft(5, '0');
-                bin += Convert.ToString(audioObjectType - 32, 2).PadLeft(6, '0');
-            }
-            else
-            {
-                bin = Convert.ToString(audioObjectType, 2).PadLeft(5, '0');
-            }
-
-            bin += Convert.ToString(frequenceIndex, 2).PadLeft(4, '0');
-            bin += Convert.ToString(channels, 2).PadLeft(4, '0');
-            bin += Convert.ToString(bitDepth, 2).PadLeft(5, '0');
-            bin += "00000000";
-
-            int nBytes = bin.Length / 8;
-            byte[] bytes = new byte[nBytes];
-            for (int i = 0; i < nBytes; i++)
-            {
-                bytes[i] = Convert.ToByte(bin.Substring(8 * i, 8), 2);
-            }
-
-            return bytes;
-        }
-
-        private int Config(byte[] config)
-        {
-            uint length = (uint)config.Length;
-
-            var size = Marshal.SizeOf(config[0]) * config.Length;
-            var ptr = Marshal.AllocHGlobal(size);
-            Marshal.Copy(config, 0, ptr, config.Length);
-
-            var byteArrayPtr = new IntPtr[]
-            {
-                ptr
+                0 => ChannelConfiguration.CHANNEL_CONFIG_NONE,
+                1 => ChannelConfiguration.CHANNEL_CONFIG_MONO,
+                2 => ChannelConfiguration.CHANNEL_CONFIG_STEREO,
+                3 => ChannelConfiguration.CHANNEL_CONFIG_STEREO_PLUS_CENTER,
+                4 => ChannelConfiguration.CHANNEL_CONFIG_STEREO_PLUS_CENTER_PLUS_REAR_MONO,
+                5 => ChannelConfiguration.CHANNEL_CONFIG_FIVE,
+                6 => ChannelConfiguration.CHANNEL_CONFIG_FIVE_PLUS_ONE,
+                7 => ChannelConfiguration.CHANNEL_CONFIG_SEVEN_PLUS_ONE,
+                8 => ChannelConfiguration.CHANNEL_CONFIG_SEVEN_PLUS_ONE,
+                _ => null
             };
-
-            var res = _aacDecoder_ConfigRaw(_decoder, byteArrayPtr, &length);
-
-            return (int)res;
         }
     }
 
