@@ -114,7 +114,10 @@ namespace AirPlay
 
             _airPlayReceiver.OnSetVolumeReceived += (s, e) =>
             {
-                // SET VOLUME
+                lock (_audioOutputLock)
+                {
+                    _audioOutput?.SetVolume(e);
+                }
             };
 
             _airPlayReceiver.OnAudioFlushReceived += (s, e) =>

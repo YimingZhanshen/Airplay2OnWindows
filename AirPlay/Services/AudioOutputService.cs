@@ -24,6 +24,7 @@ namespace AirPlay.Services
         private bool _initialized = false;
         private WaveFormat _waveFormat;
         private bool _needsReinit = false;
+        private float _volume = 1.0f;
 
         public event EventHandler PlaybackStoppedUnexpectedly;
 
@@ -127,6 +128,38 @@ namespace AirPlay.Services
                     Console.WriteLine($"Failed to recreate audio device: {ex.Message}");
                     _needsReinit = true;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Set audio volume. AirPlay sends volume in dB scale:
+        /// -144.0 = mute, -30.0 to 0.0 = normal range.
+        /// Converts to linear scale (0.0 to 1.0) for NAudio.
+        /// </summary>
+        public void SetVolume(decimal airplayVolume)
+        {
+            lock (_lock)
+            {
+                if (_disposed) return;
+
+                if (airplayVolume <= -144.0m)
+                {
+                    _volume = 0.0f;
+                }
+                else
+                {
+                    // Convert dB to linear: volume = 10^(dB/20)
+                    // AirPlay range is roughly -30 to 0
+                    _volume = (float)Math.Pow(10.0, (double)airplayVolume / 20.0);
+                    _volume = Math.Max(0.0f, Math.Min(1.0f, _volume));
+                }
+
+                if (_waveOut is DirectSoundOut dsOut)
+                {
+                    dsOut.Volume = _volume;
+                }
+
+                Console.WriteLine($"Volume set to {_volume:F2} (AirPlay dB: {airplayVolume:F1})");
             }
         }
 

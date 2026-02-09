@@ -62,6 +62,9 @@ namespace AirPlay.Listeners
                 session.DecryptedAesKey = decryptedAesKey;
             }
 
+            // Initialize decoder (needed for type 0x56 audio packets during mirroring)
+            InitializeDecoder(session.AudioFormat);
+
             await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
 
             var packet = new byte[RAOP_PACKET_LENGTH];
@@ -87,9 +90,22 @@ namespace AirPlay.Listeners
                         var data = reader.ReadBytes(cret - 4);
 
                         var ret = RaopBufferQueue(_raopBuffer, data, (ushort)data.Length, session);
-                        if (ret >= 0)
+
+                        // Dequeue and play audio received on control socket (used during screen mirroring)
+                        byte[] audiobuf;
+                        int audiobuflen = 0;
+                        uint timestamp = 0;
+                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, true)) != null)
                         {
-                            // ERROR
+                            if (audiobuf.Length == 0 || audiobuflen <= 0)
+                                continue;
+
+                            var pcmData = new PcmData();
+                            pcmData.Length = audiobuflen;
+                            pcmData.Data = audiobuf;
+                            pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
+
+                            _receiver.OnPCMData(pcmData);
                         }
                     }
                     else if (type_c == 0x54)
