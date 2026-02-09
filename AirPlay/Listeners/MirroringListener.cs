@@ -130,7 +130,7 @@ namespace AirPlay.Listeners
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Mirroring error: {e.Message}");
+                    Console.WriteLine($"Mirroring error: {e}");
                 }
 
                 // Save current session periodically

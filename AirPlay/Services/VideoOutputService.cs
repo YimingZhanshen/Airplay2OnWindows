@@ -175,12 +175,14 @@ namespace AirPlay.Services
 
                 try
                 {
+                    bool isKeyFrame = data.FrameType == 5;
+
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                     {
                         if (_pipeServer != null && _pipeServer.IsConnected)
                         {
                             _pipeServer.Write(data.Data, 0, data.Length);
-                            _pipeServer.Flush();
+                            if (isKeyFrame) _pipeServer.Flush();
                         }
                     }
                     else
@@ -188,7 +190,7 @@ namespace AirPlay.Services
                         if (_unixPipeStream != null && _unixPipeStream.CanWrite)
                         {
                             _unixPipeStream.Write(data.Data, 0, data.Length);
-                            _unixPipeStream.Flush();
+                            if (isKeyFrame) _unixPipeStream.Flush();
                         }
                     }
 
@@ -250,6 +252,8 @@ namespace AirPlay.Services
                 _disposed = true;
 
                 _cts?.Cancel();
+                _cts?.Dispose();
+                _cts = null;
 
                 try
                 {
