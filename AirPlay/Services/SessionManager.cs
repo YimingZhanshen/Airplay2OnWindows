@@ -26,31 +26,7 @@ namespace AirPlay.Services.Implementations
 
         public Task CreateOrUpdateSessionAsync(string key, Session session)
         {
-            _sessions.AddOrUpdate(key, session, (k, old) =>
-            {
-                var s = new Session(k)
-                {
-                    EcdhOurs = session.EcdhOurs ?? old.EcdhOurs,
-                    EcdhTheirs = session.EcdhTheirs ?? old.EcdhTheirs,
-                    EdTheirs = session.EdTheirs ?? old.EdTheirs,
-                    EcdhShared = session.EcdhShared ?? old.EcdhShared,
-                    PairVerified = session.PairVerified ?? old.PairVerified,
-                    AesKey = session.AesKey ?? old.AesKey,
-                    AesIv = session.AesIv ?? old.AesIv,
-                    StreamConnectionId = session.StreamConnectionId ?? old.StreamConnectionId,
-                    KeyMsg = session.KeyMsg ?? old.KeyMsg,
-                    DecryptedAesKey = session.DecryptedAesKey ?? old.DecryptedAesKey,
-                    MirroringListener = session.MirroringListener ?? old.MirroringListener,
-                    AudioControlListener = session.AudioControlListener ?? old.AudioControlListener,
-                    SpsPps  = session.SpsPps  ?? old.SpsPps,
-                    Pts = session.Pts ?? old.Pts,
-                    WidthSource = session.WidthSource ?? old.WidthSource,
-                    HeightSource = session.HeightSource ?? old.HeightSource,
-                    MirroringSession = session.MirroringSession ?? old.MirroringSession,
-                    AudioFormat = session.AudioFormat == AudioFormat.Unknown ? old.AudioFormat : session.AudioFormat
-                };
-                return s;
-            });
+            _sessions.AddOrUpdate(key, session, (k, old) => session);
             return Task.CompletedTask;
         }
     }

@@ -46,97 +46,112 @@ namespace AirPlay.Listeners
                 session.DecryptedAesKey = decryptedAesKey;
             }
 
+            // Reset cipher state for new connection
+            _nextDecryptCount = 0;
+            Array.Clear(_og, 0, _og.Length);
+
             InitAesCtrCipher(session.DecryptedAesKey, session.EcdhShared, session.StreamConnectionId);
 
             var headerBuffer = new byte[128];
 
-            do
+            try
             {
-                // Read the first 4 bytes to determine packet type
-                int readStart = 0;
-                int ret;
                 do
                 {
-                    ret = await stream.ReadAsync(headerBuffer, readStart, 4 - readStart, cancellationToken);
-                    if (ret <= 0)
-                    {
-                        goto exit_loop;
-                    }
-                    readStart += ret;
-                } while (readStart < 4);
-
-                if ((headerBuffer[0] == 80 && headerBuffer[1] == 79 && headerBuffer[2] == 83 && headerBuffer[3] == 84) || (headerBuffer[0] == 71 && headerBuffer[1] == 69 && headerBuffer[2] == 84))
-                {
-                    // Request is POST or GET (skip)
-                    continue;
-                }
-
-                // Read remaining 124 bytes of the 128-byte header
-                do
-                {
-                    ret = await stream.ReadAsync(headerBuffer, readStart, 128 - readStart, cancellationToken);
-                    if (ret <= 0)
-                    {
-                        goto exit_loop;
-                    }
-                    readStart += ret;
-                } while (readStart < 128);
-
-                var header = new MirroringHeader(headerBuffer);
-
-                // Update session dimensions from codec config (PayloadType 1)
-                if (header.PayloadType == 1)
-                {
-                    if (header.WidthSource > 0)
-                        session.WidthSource = header.WidthSource;
-                    if (header.HeightSource > 0)
-                        session.HeightSource = header.HeightSource;
-                }
-
-                if (header.PayloadSize <= 0)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    byte[] payload = new byte[header.PayloadSize];
-
-                    readStart = 0;
+                    // Read the first 4 bytes to determine packet type
+                    int readStart = 0;
+                    int ret;
                     do
                     {
-                        ret = await stream.ReadAsync(payload, readStart, header.PayloadSize - readStart, cancellationToken);
+                        ret = await stream.ReadAsync(headerBuffer, readStart, 4 - readStart, cancellationToken);
                         if (ret <= 0)
                         {
                             goto exit_loop;
                         }
                         readStart += ret;
-                    } while (readStart < header.PayloadSize);
+                    } while (readStart < 4);
 
-                    if (header.PayloadType == 0)
+                    if ((headerBuffer[0] == 80 && headerBuffer[1] == 79 && headerBuffer[2] == 83 && headerBuffer[3] == 84) || (headerBuffer[0] == 71 && headerBuffer[1] == 69 && headerBuffer[2] == 84))
                     {
-                        DecryptVideoData(payload, out byte[] output);
-                        // Use the PTS from this specific frame's header
-                        long framePts = header.PayloadPts;
-                        int width = session.WidthSource ?? 1920;
-                        int height = session.HeightSource ?? 1080;
-                        ProcessVideo(output, session.SpsPps, framePts, width, height);
+                        // Request is POST or GET (skip)
+                        continue;
                     }
-                    else if (header.PayloadType == 1)
+
+                    // Read remaining 124 bytes of the 128-byte header
+                    do
                     {
-                        ProcessSpsPps(payload, out byte[] spsPps);
-                        session.SpsPps = spsPps;
+                        ret = await stream.ReadAsync(headerBuffer, readStart, 128 - readStart, cancellationToken);
+                        if (ret <= 0)
+                        {
+                            goto exit_loop;
+                        }
+                        readStart += ret;
+                    } while (readStart < 128);
+
+                    var header = new MirroringHeader(headerBuffer);
+
+                    // Update session dimensions from codec config (PayloadType 1)
+                    if (header.PayloadType == 1)
+                    {
+                        if (header.WidthSource > 0)
+                            session.WidthSource = header.WidthSource;
+                        if (header.HeightSource > 0)
+                            session.HeightSource = header.HeightSource;
                     }
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine($"Mirroring error: {e}");
-                }
 
-                // Save current session periodically
-                await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
+                    if (header.PayloadSize <= 0)
+                    {
+                        continue;
+                    }
 
-            } while (client.Connected && stream.CanRead && !cancellationToken.IsCancellationRequested);
+                    try
+                    {
+                        byte[] payload = new byte[header.PayloadSize];
+
+                        readStart = 0;
+                        do
+                        {
+                            ret = await stream.ReadAsync(payload, readStart, header.PayloadSize - readStart, cancellationToken);
+                            if (ret <= 0)
+                            {
+                                goto exit_loop;
+                            }
+                            readStart += ret;
+                        } while (readStart < header.PayloadSize);
+
+                        if (header.PayloadType == 0)
+                        {
+                            DecryptVideoData(payload, out byte[] output);
+                            // Use the PTS from this specific frame's header
+                            long framePts = header.PayloadPts;
+                            int width = session.WidthSource ?? 1920;
+                            int height = session.HeightSource ?? 1080;
+                            ProcessVideo(output, session.SpsPps, framePts, width, height);
+                        }
+                        else if (header.PayloadType == 1)
+                        {
+                            ProcessSpsPps(payload, out byte[] spsPps);
+                            session.SpsPps = spsPps;
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine($"Mirroring error: {e}");
+                    }
+
+                    // Save current session periodically
+                    await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
+
+                } while (client.Connected && stream.CanRead && !cancellationToken.IsCancellationRequested);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown - cancellation was requested
+            }
 
             exit_loop:
             Console.WriteLine($"Closing mirroring connection..");

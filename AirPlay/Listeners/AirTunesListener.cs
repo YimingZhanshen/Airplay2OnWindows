@@ -440,8 +440,16 @@ namespace AirPlay.Listeners
 
                             session.StreamingListener = streaming;
                         }
-                        if (session.FairPlayReady && session.AudioSessionReady && session.AudioControlListener == null)
+                        if (session.FairPlayReady && session.AudioSessionReady)
                         {
+                            // Stop existing audio listener before creating a new one
+                            // (ports 7002/7003 must be released first)
+                            if (session.AudioControlListener != null)
+                            {
+                                try { await session.AudioControlListener.StopAsync(); } catch { }
+                                session.AudioControlListener = null;
+                            }
+
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
                             var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -565,7 +573,12 @@ namespace AirPlay.Listeners
                             if (session.MirroringListener != null)
                             {
                                 await session.MirroringListener.StopAsync();
+                                session.MirroringListener = null;
                             }
+                            // Reset video state for clean reconnect
+                            session.SpsPps = null;
+                            session.StreamConnectionId = null;
+                            session.MirroringSession = null;
                         }
                         // If audio session
                         if (type == 96)
@@ -574,7 +587,9 @@ namespace AirPlay.Listeners
                             if (session.AudioControlListener != null)
                             {
                                 await session.AudioControlListener.StopAsync();
+                                session.AudioControlListener = null;
                             }
+                            session.AudioFormat = AudioFormat.Unknown;
                         }
                     }
                 }
