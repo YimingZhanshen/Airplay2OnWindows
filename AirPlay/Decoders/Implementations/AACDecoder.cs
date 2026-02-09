@@ -17,11 +17,13 @@ namespace AirPlay
         private SampleBuffer _outputBuffer = new SampleBuffer();
 
         private int _pcmPktSize;
+        private AudioObjectType _audioObjectType;
 
-        public AudioFormat Type => AudioFormat.AAC;
+        public AudioFormat Type => _audioObjectType == AudioObjectType.AOT_ER_AAC_ELD ? AudioFormat.AAC_ELD : AudioFormat.AAC;
 
         public AACDecoder(TransportType transportFmt, AudioObjectType audioObjectType, uint nrOfLayers)
         {
+            _audioObjectType = audioObjectType;
             _decoderConfig = new DecoderConfig();
             if (GetProfileFromAudioObjectType(audioObjectType) is Profile profile)
             {
@@ -90,6 +92,7 @@ namespace AirPlay
                 AudioObjectType.AOT_ER_TWIN_VQ => Profile.ER_TWIN_VQ,
                 AudioObjectType.AOT_ER_BSAC => Profile.ER_BSAC,
                 AudioObjectType.AOT_ER_AAC_LD => Profile.ER_AAC_LD,
+                AudioObjectType.AOT_ER_AAC_ELD => Profile.ER_AAC_LD, // AAC-ELD mapped to closest supported profile
                 _ => null
             };
         }

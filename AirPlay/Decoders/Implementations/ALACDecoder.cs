@@ -25,10 +25,6 @@ namespace AirPlay
             _pcm_pkt_size = frameLength * channels * bitDepth / 8;
 
             _alacDecoder = new LibALAC.Decoder(sampleRate, channels, bitDepth, frameLength);
-            if (_alacDecoder == null)
-            {
-                return -1;
-            }
             return 0;
         }
 
