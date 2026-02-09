@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -34,4 +36,4 @@ jobs:
       shell: bash
       run: |
         echo "Build completed for ${{ matrix.os }} - ${{ matrix.configuration }}"
-        ls -la AirPlay/bin/${{ matrix.configuration }}/net8.0/ || true
+        find AirPlay/bin/${{ matrix.configuration }} -type f -name "AirPlay.dll" || true

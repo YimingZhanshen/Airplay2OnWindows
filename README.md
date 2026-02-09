@@ -1,12 +1,31 @@
 # AirPlay Receiver
-Open source implementation of AirPlay 2 Mirroring / Audio protocol in C# .Net Core.  
+Open source implementation of AirPlay 2 Mirroring / Audio protocol in C# and .NET.  
+
+![Build Status](https://github.com/YimingZhanshen/Airplay2OnWindows/workflows/Build%20and%20Test/badge.svg)
+
+## Requirements
+
+- .NET 8.0 SDK or later
+- C++ build tools for compiling AAC and ALAC codecs
 
 ## Generic
 
 Tested on macOS with iPhone 12 Pro iOS14.  
   
-The project is fully functional, but the AAC and ALAC libraries written in C ++ must be built.  
-  
+The project is fully functional, but the AAC and ALAC libraries written in C++ must be built.  
+
+## Building the Project
+
+### Prerequisites
+1. Install [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+2. Build the required codecs (see below)
+
+### Compile the Project
+```bash
+$ dotnet restore AirPlay.sln
+$ dotnet build AirPlay.sln --configuration Release
+```
+
 ## How To
 
 ### Build AAC Codec
