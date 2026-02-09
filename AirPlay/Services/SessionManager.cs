@@ -24,6 +24,11 @@ namespace AirPlay.Services.Implementations
             return Task.FromResult(_session ?? new Session(key));
         }
 
+        /// <summary>
+        /// Store session state. Callers must always retrieve the session via GetSessionAsync first,
+        /// modify it, then save it back. The incoming session replaces the old one entirely,
+        /// allowing fields to be intentionally set to null (e.g., during TEARDOWN cleanup).
+        /// </summary>
         public Task CreateOrUpdateSessionAsync(string key, Session session)
         {
             _sessions.AddOrUpdate(key, session, (k, old) => session);

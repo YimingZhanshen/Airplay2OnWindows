@@ -446,7 +446,8 @@ namespace AirPlay.Listeners
                             // (ports 7002/7003 must be released first)
                             if (session.AudioControlListener != null)
                             {
-                                try { await session.AudioControlListener.StopAsync(); } catch { }
+                                try { await session.AudioControlListener.StopAsync(); }
+                                catch (Exception ex) { Console.WriteLine($"Error stopping old audio listener: {ex.Message}"); }
                                 session.AudioControlListener = null;
                             }
 

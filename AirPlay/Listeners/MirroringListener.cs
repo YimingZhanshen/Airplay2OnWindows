@@ -134,10 +134,6 @@ namespace AirPlay.Listeners
                             session.SpsPps = spsPps;
                         }
                     }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
                     catch (Exception e)
                     {
                         Console.WriteLine($"Mirroring error: {e}");
