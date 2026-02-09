@@ -9,20 +9,9 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     permissions:
       contents: read
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        configuration: [Release]
-        include:
-          - os: ubuntu-latest
-            rid: linux-x64
-          - os: windows-latest
-            rid: win-x64
-          - os: macos-latest
-            rid: osx-x64
     
     steps:
     - name: Checkout code
@@ -37,13 +26,13 @@ jobs:
       run: dotnet restore AirPlay.sln
       
     - name: Build
-      run: dotnet build AirPlay.sln --configuration ${{ matrix.configuration }} --no-restore
+      run: dotnet build AirPlay.sln --configuration Release --no-restore
       
     - name: Publish
-      run: dotnet publish AirPlay/AirPlay.csproj --configuration ${{ matrix.configuration }} --runtime ${{ matrix.rid }} --self-contained true --output ./publish/${{ matrix.rid }}
+      run: dotnet publish AirPlay/AirPlay.csproj --configuration Release --runtime win-x64 --self-contained true --output ./publish/win-x64
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: AirPlay-${{ matrix.rid }}
-        path: ./publish/${{ matrix.rid }}/
+        name: AirPlay-win-x64
+        path: ./publish/win-x64/
