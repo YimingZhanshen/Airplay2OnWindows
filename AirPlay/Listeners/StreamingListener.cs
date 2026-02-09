@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -138,7 +139,7 @@ namespace AirPlay.Listeners
                         return new KeyValuePair<string, string>(splitted[0], splitted[1]);
                     }).ToDictionary(k => k.Key, v => v.Value);
 
-                    var startAt = dict.TryGetValue("Start-Position", out string dStartAt) ? decimal.Parse(dStartAt) : 0M;
+                    var startAt = dict.TryGetValue("Start-Position", out string dStartAt) ? decimal.Parse(dStartAt, CultureInfo.InvariantCulture) : 0M;
                     var url = dict.TryGetValue("Content-Location", out string dUrl) ? dUrl : throw new ArgumentNullException(nameof(dUrl));
 
                     // DO SOMETHING HERE...

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.Serialization.Plists;
@@ -485,7 +486,7 @@ namespace AirPlay.Listeners
                             if (key.Equals("volume", StringComparison.OrdinalIgnoreCase))
                             {
                                 // request.Body contains 'volume: N.NNNNNN'
-                                _receiver.OnSetVolume(decimal.Parse(val));
+                                _receiver.OnSetVolume(decimal.Parse(val, CultureInfo.InvariantCulture));
                             }
                             else if (key.Equals("progress", StringComparison.OrdinalIgnoreCase))
                             {
@@ -541,7 +542,10 @@ namespace AirPlay.Listeners
                     }
                 }
 
-                await session.AudioControlListener.FlushAsync(next_seq);
+                if (session.AudioControlListener != null)
+                {
+                    await session.AudioControlListener.FlushAsync(next_seq);
+                }
             }
             if (request.Type == RequestType.TEARDOWN)
             {
@@ -560,13 +564,19 @@ namespace AirPlay.Listeners
                         if (type == 110)
                         {
                             // Stop mirroring session
-                            await session.MirroringListener.StopAsync();
+                            if (session.MirroringListener != null)
+                            {
+                                await session.MirroringListener.StopAsync();
+                            }
                         }
                         // If audio session
                         if (type == 96)
                         {
                             // Stop audio session
-                            await session.AudioControlListener.StopAsync();
+                            if (session.AudioControlListener != null)
+                            {
+                                await session.AudioControlListener.StopAsync();
+                            }
                         }
                     }
                 }

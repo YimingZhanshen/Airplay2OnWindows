@@ -100,7 +100,10 @@ namespace AirPlay
 
         public void Dispose()
         {
-
+            if (_airPlayReceiver is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
         }
     }
 }

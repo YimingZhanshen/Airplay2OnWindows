@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace AirPlay
 {
-    public class AirPlayReceiver : IRtspReceiver, IAirPlayReceiver
+    public class AirPlayReceiver : IRtspReceiver, IAirPlayReceiver, IDisposable
     {
         public event EventHandler<decimal> OnSetVolumeReceived;
         public event EventHandler<H264Data> OnH264DataReceived;
@@ -140,6 +140,11 @@ namespace AirPlay
         public void OnPCMData(PcmData data)
         {
             OnPCMDataReceived?.Invoke(this, data);
+        }
+
+        public void Dispose()
+        {
+            _mdns?.Stop();
         }
     }
 }

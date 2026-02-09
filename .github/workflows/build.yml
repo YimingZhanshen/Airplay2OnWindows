@@ -15,7 +15,14 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        configuration: [Debug, Release]
+        configuration: [Release]
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-x64
     
     steps:
     - name: Checkout code
@@ -32,8 +39,11 @@ jobs:
     - name: Build
       run: dotnet build AirPlay.sln --configuration ${{ matrix.configuration }} --no-restore
       
-    - name: Display build output location
-      shell: bash
-      run: |
-        echo "Build completed for ${{ matrix.os }} - ${{ matrix.configuration }}"
-        find AirPlay/bin/${{ matrix.configuration }} -type f -name "AirPlay.dll" || true
+    - name: Publish
+      run: dotnet publish AirPlay/AirPlay.csproj --configuration ${{ matrix.configuration }} --runtime ${{ matrix.rid }} --self-contained true --output ./publish/${{ matrix.rid }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: AirPlay-${{ matrix.rid }}
+        path: ./publish/${{ matrix.rid }}/
