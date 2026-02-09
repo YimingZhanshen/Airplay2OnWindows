@@ -14,11 +14,22 @@ namespace AirPlay.Services
         private readonly int _maxQueueSize;
         private byte[] _currentBuffer;
         private int _currentOffset;
+        private float _volume = 1.0f;
 
         public WaveFormat WaveFormat { get; }
         public int QueuedBuffers => _queue.Count;
         public long TotalBytesRead { get; private set; }
         public DateTime LastReadTime { get; private set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// Volume level (0.0 = mute, 1.0 = full volume).
+        /// Applied to PCM samples during Read().
+        /// </summary>
+        public float Volume
+        {
+            get => _volume;
+            set => _volume = Math.Max(0.0f, Math.Min(1.0f, value));
+        }
 
         public StreamingWaveProvider(WaveFormat waveFormat, int maxQueueSize = 500)
         {
@@ -94,6 +105,22 @@ namespace AirPlay.Services
             }
 
             TotalBytesRead += bytesWritten;
+
+            // Apply volume scaling to 16-bit PCM samples
+            if (_volume < 0.999f)
+            {
+                for (int i = offset; i < offset + bytesWritten; i += 2)
+                {
+                    if (i + 1 < offset + bytesWritten)
+                    {
+                        short sample = (short)(buffer[i] | (buffer[i + 1] << 8));
+                        sample = (short)(sample * _volume);
+                        buffer[i] = (byte)(sample & 0xFF);
+                        buffer[i + 1] = (byte)((sample >> 8) & 0xFF);
+                    }
+                }
+            }
+
             return bytesWritten;
         }
     }

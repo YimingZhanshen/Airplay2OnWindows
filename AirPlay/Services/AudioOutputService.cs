@@ -154,9 +154,10 @@ namespace AirPlay.Services
                     _volume = Math.Max(0.0f, Math.Min(1.0f, _volume));
                 }
 
-                if (_waveOut is DirectSoundOut dsOut)
+                // Apply volume via StreamingWaveProvider (DirectSoundOut doesn't support Volume)
+                if (_streamProvider != null)
                 {
-                    dsOut.Volume = _volume;
+                    _streamProvider.Volume = _volume;
                 }
 
                 Console.WriteLine($"Volume set to {_volume:F2} (AirPlay dB: {airplayVolume:F1})");
