@@ -169,9 +169,15 @@ namespace AirPlay.Listeners
 
                     //if(_raopBuffer.LastSeqNum - _raopBuffer.FirstSeqNum > (RAOP_BUFFER_LENGTH / 8))
                     //{
-                        // Dequeue all frames in queue
-                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
+                        // Dequeue frames from buffer (limit per packet to prevent flooding)
+                        int dequeueCount = 0;
+                        const int maxDequeuePerPacket = 10;
+                        while (dequeueCount < maxDequeuePerPacket &&
+                               (audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
                         {
+                            if (audiobuf.Length == 0 || audiobuflen <= 0)
+                                continue;
+
                             var pcmData = new PcmData();
                             pcmData.Length = audiobuflen;
                             pcmData.Data = audiobuf;
@@ -179,6 +185,7 @@ namespace AirPlay.Listeners
                             pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
 
                             _receiver.OnPCMData(pcmData);
+                            dequeueCount++;
                         }
                     //}
 
@@ -373,25 +380,17 @@ namespace AirPlay.Listeners
                 /* Check how much we have space left in the buffer */
                 if (buflen < RAOP_BUFFER_LENGTH)
                 {
-                    /* Return nothing and hope resend gets on time */
-                    length = entry.AudioBufferSize;
-                    Array.Fill<byte>(entry.AudioBuffer, 0, 0, length);
-
-                    return entry.AudioBuffer;
+                    /* Entry not yet available, wait for resend - return null to stop dequeue loop */
+                    return null;
                 }
-                /* Risk of buffer overrun, return empty buffer */
-                return Array.Empty<byte>();
+
+                /* Risk of buffer overrun, skip this entry and advance */
+                entry.AudioBufferLen = 0;
+                raop_buffer.Entries[raop_buffer.FirstSeqNum % RAOP_BUFFER_LENGTH] = entry;
+                raop_buffer.FirstSeqNum += 1;
+                return null;
             }
 
-            /* Update buffer and validate entry */
-            if (!entry.Available)
-            {
-                /* Return an empty audio buffer to skip audio */
-                length = entry.AudioBufferSize;
-                Array.Fill<byte>(entry.AudioBuffer, 0, 0, length);
-
-                return entry.AudioBuffer;
-            }
             entry.Available = false;
 
             /* Return entry audio buffer */
