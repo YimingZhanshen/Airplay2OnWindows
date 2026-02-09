@@ -1,10 +1,12 @@
 ﻿using AirPlay.Models.Configs;
+using AirPlay.Services;
 using AirPlay.Utils;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,12 +17,38 @@ namespace AirPlay
         private readonly IAirPlayReceiver _airPlayReceiver;
         private readonly DumpConfig _dConfig;
 
+        private AudioOutputService _audioOutput;
         private List<byte> _audiobuf;
+        private readonly object _audioOutputLock = new object();
 
         public AirPlayService(IAirPlayReceiver airPlayReceiver, IOptions<DumpConfig> dConfig)
         {
             _airPlayReceiver = airPlayReceiver ?? throw new ArgumentNullException(nameof(airPlayReceiver));
             _dConfig = dConfig?.Value ?? throw new ArgumentNullException(nameof(dConfig));
+        }
+
+        private void RecreateAudioOutput()
+        {
+            lock (_audioOutputLock)
+            {
+                Console.WriteLine("Recreating audio output after unexpected stop...");
+
+                try
+                {
+                    _audioOutput?.Dispose();
+                    Thread.Sleep(200);
+
+                    _audioOutput = new AudioOutputService();
+                    _audioOutput.Initialize();
+                    _audioOutput.PlaybackStoppedUnexpectedly += (s, e) => RecreateAudioOutput();
+
+                    Console.WriteLine("Audio output recreated successfully");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to recreate audio output: {ex.Message}");
+                }
+            }
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
@@ -49,12 +77,38 @@ namespace AirPlay
             }
 #endif
 
+            // Initialize audio output on Windows
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                try
+                {
+                    _audioOutput = new AudioOutputService();
+                    _audioOutput.Initialize();
+                    _audioOutput.PlaybackStoppedUnexpectedly += (s, e) => RecreateAudioOutput();
+                    Console.WriteLine("Audio output initialized successfully");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to initialize audio output: {ex.Message}");
+                    Console.WriteLine("Continuing without audio output...");
+                }
+            }
+
             await _airPlayReceiver.StartListeners(cancellationToken);
             await _airPlayReceiver.StartMdnsAsync().ConfigureAwait(false);
 
             _airPlayReceiver.OnSetVolumeReceived += (s, e) =>
             {
                 // SET VOLUME
+            };
+
+            _airPlayReceiver.OnAudioFlushReceived += (s, e) =>
+            {
+                Console.WriteLine("Audio flush received - restarting audio output for new track");
+                lock (_audioOutputLock)
+                {
+                    _audioOutput?.HandleFlush();
+                }
             };
 
             // DUMP H264 VIDEO
@@ -72,7 +126,12 @@ namespace AirPlay
             _audiobuf = new List<byte>();
             _airPlayReceiver.OnPCMDataReceived += (s, e) =>
             {
-                // DO SOMETHING WITH AUDIO DATA..
+                // Play audio through speakers
+                lock (_audioOutputLock)
+                {
+                    _audioOutput?.AddSamples(e.Data, 0, e.Length);
+                }
+
 #if DUMP
                 _audiobuf.AddRange(e.Data);
 #endif
@@ -81,6 +140,9 @@ namespace AirPlay
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
+            _audioOutput?.Dispose();
+            _audioOutput = null;
+
 #if DUMP
             // DUMP WAV AUDIO
             var bPath = _dConfig.Path;
@@ -100,6 +162,9 @@ namespace AirPlay
 
         public void Dispose()
         {
+            _audioOutput?.Dispose();
+            _audioOutput = null;
+
             if (_airPlayReceiver is IDisposable disposable)
             {
                 disposable.Dispose();

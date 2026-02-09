@@ -173,7 +173,7 @@ namespace AirPlay.Listeners
                         while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
                         {
                             var pcmData = new PcmData();
-                            pcmData.Length = 960;
+                            pcmData.Length = audiobuflen;
                             pcmData.Data = audiobuf;
 
                             pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
@@ -198,6 +198,7 @@ namespace AirPlay.Listeners
         public Task FlushAsync(int nextSequence)
         {
             RaopBufferFlush(_raopBuffer, nextSequence);
+            _receiver.OnAudioFlush();
             return Task.CompletedTask;
         }
 
