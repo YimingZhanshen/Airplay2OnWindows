@@ -169,12 +169,14 @@ namespace AirPlay.Listeners
 
                     //if(_raopBuffer.LastSeqNum - _raopBuffer.FirstSeqNum > (RAOP_BUFFER_LENGTH / 8))
                     //{
-                        // Dequeue frames from buffer (limit per packet to prevent flooding)
+                        // Dequeue frames from buffer, limit to prevent flooding the output queue
                         int dequeueCount = 0;
                         const int maxDequeuePerPacket = 10;
                         while (dequeueCount < maxDequeuePerPacket &&
                                (audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
                         {
+                            dequeueCount++;
+
                             if (audiobuf.Length == 0 || audiobuflen <= 0)
                                 continue;
 
@@ -185,7 +187,6 @@ namespace AirPlay.Listeners
                             pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
 
                             _receiver.OnPCMData(pcmData);
-                            dequeueCount++;
                         }
                     //}
 
@@ -384,7 +385,7 @@ namespace AirPlay.Listeners
                     return null;
                 }
 
-                /* Risk of buffer overrun, skip this entry and advance */
+                /* Risk of buffer overrun, skip this entry and advance to prevent getting stuck */
                 entry.AudioBufferLen = 0;
                 raop_buffer.Entries[raop_buffer.FirstSeqNum % RAOP_BUFFER_LENGTH] = entry;
                 raop_buffer.FirstSeqNum += 1;
