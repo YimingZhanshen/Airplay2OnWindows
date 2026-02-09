@@ -1,0 +1,37 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        configuration: [Debug, Release]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
+    - name: Restore dependencies
+      run: dotnet restore AirPlay.sln
+      
+    - name: Build
+      run: dotnet build AirPlay.sln --configuration ${{ matrix.configuration }} --no-restore
+      
+    - name: Display build output location
+      shell: bash
+      run: |
+        echo "Build completed for ${{ matrix.os }} - ${{ matrix.configuration }}"
+        ls -la AirPlay/bin/${{ matrix.configuration }}/net8.0/ || true
