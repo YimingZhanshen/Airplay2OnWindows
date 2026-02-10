@@ -63,7 +63,7 @@ namespace AirPlay.Listeners
             }
 
             // Initialize decoder (needed for type 0x56 audio packets during mirroring)
-            InitializeDecoder(session.AudioFormat);
+            InitializeDecoder(session);
 
             await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
 
@@ -156,7 +156,7 @@ namespace AirPlay.Listeners
             }
 
             // Initialize decoder
-            InitializeDecoder(session.AudioFormat);
+            InitializeDecoder(session);
 
             await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
 
@@ -236,7 +236,8 @@ namespace AirPlay.Listeners
 
         private RaopBuffer RaopBufferInit()
         {
-            var audio_buffer_size = 480 * 4;
+            // Use max possible decoded PCM size: 1024 samples * 2 channels * 2 bytes (AAC-main)
+            var audio_buffer_size = 1024 * 4;
             var raop_buffer = new RaopBuffer();
 
             raop_buffer.BufferSize = audio_buffer_size * RAOP_BUFFER_LENGTH;
@@ -491,16 +492,19 @@ namespace AirPlay.Listeners
             return 0;
         }
 
-        private void InitializeDecoder (AudioFormat audioFormat)
+        private void InitializeDecoder (Session session)
         {
             if (_decoder != null) return;
+
+            var audioFormat = session.AudioFormat;
+            var spf = session.AudioSamplesPerFrame;
 
             if (audioFormat == AudioFormat.ALAC)
             {
                 // RTP info: 96 AppleLossless, 96 352 0 16 40 10 14 2 255 0 0 44100
                 // (ALAC -> PCM)
 
-                var frameLength = 352;
+                var frameLength = spf > 0 ? spf : 352;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
@@ -513,7 +517,7 @@ namespace AirPlay.Listeners
                 // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-main; constantDuration=1024
                 // (AAC-MAIN -> PCM)
 
-                var frameLength = 1024;
+                var frameLength = spf > 0 ? spf : 1024;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
@@ -526,7 +530,7 @@ namespace AirPlay.Listeners
                 // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
                 // (AAC-ELD -> PCM) using FDK AAC native decoder
 
-                var frameLength = 480;
+                var frameLength = spf > 0 ? spf : 480;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
@@ -554,11 +558,31 @@ namespace AirPlay.Listeners
                     _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                 }
             }
+            else if (audioFormat == AudioFormat.PCM)
+            {
+                // Raw PCM audio - no decoding needed
+                _decoder = new PCMDecoder();
+            }
             else
             {
-                // (PCM -> PCM)
-                // Not used
-                _decoder = new PCMDecoder();
+                // Determine format from compression type if audioFormat is unknown
+                if (session.AudioCompressionType == 1)
+                {
+                    // ct=1 = ALAC
+                    var frameLength = spf > 0 ? spf : 352;
+                    _decoder = new ALACDecoder();
+                    _decoder.Config(44100, 2, 16, frameLength);
+                }
+                else if (session.AudioCompressionType == 0)
+                {
+                    // ct=0 = PCM
+                    _decoder = new PCMDecoder();
+                }
+                else
+                {
+                    // Default fallback
+                    _decoder = new PCMDecoder();
+                }
             }
         }
     }

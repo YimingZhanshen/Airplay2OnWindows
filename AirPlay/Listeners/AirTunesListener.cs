@@ -339,6 +339,14 @@ namespace AirPlay.Listeners
                                     var description = GetAudioFormatDescription(audioFormat);
                                     Console.WriteLine($"Audio type: {description}");
                                 }
+                                if (stream.ContainsKey("ct"))
+                                {
+                                    session.AudioCompressionType = (int)stream["ct"];
+                                }
+                                if (stream.ContainsKey("spf"))
+                                {
+                                    session.AudioSamplesPerFrame = (int)stream["spf"];
+                                }
                                 if (stream.ContainsKey("controlPort"))
                                 {
                                     // Use this port to request resend lost packet? (remote port)
@@ -609,6 +617,9 @@ namespace AirPlay.Listeners
 
             switch (format)
             {
+                case 0x0:
+                    formatDescription = "96 L16/44100/2 (PCM)";
+                    break;
                 case 0x40000:
                     formatDescription = "96 AppleLossless, 96 352 0 16 40 10 14 2 255 0 0 44100";
                     break;
