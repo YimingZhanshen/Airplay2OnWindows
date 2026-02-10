@@ -41,7 +41,12 @@ namespace AirPlay.Decoders.Implementations
 
         private IntPtr _handle;
         private int _pcmOutputSize;
+        private int _channels;
         private bool _disposed;
+
+        // FDK AAC requires an output buffer of at least 2048 * channels samples
+        // for internal processing, even if the actual frame is smaller (e.g. 480 samples)
+        private const int FDK_MIN_FRAME_SAMPLES = 2048;
 
         public AudioFormat Type => AudioFormat.AAC_ELD;
 
@@ -51,6 +56,8 @@ namespace AirPlay.Decoders.Implementations
 
         public int Config(int sampleRate, int channels, int bitDepth, int frameLength)
         {
+            _channels = channels;
+
             // Open FDK AAC decoder with raw transport format
             _handle = aacDecoder_Open(TT_MP4_RAW, 1);
             if (_handle == IntPtr.Zero)
@@ -82,6 +89,7 @@ namespace AirPlay.Decoders.Implementations
                 }
             }
 
+            // The actual PCM output per frame: frameLength * channels * bytesPerSample
             _pcmOutputSize = frameLength * channels * (bitDepth / 8);
 
             Console.WriteLine($"FDK AAC-ELD decoder configured: {sampleRate}Hz, {channels}ch, {bitDepth}bit, frameLength={frameLength}");
@@ -117,22 +125,21 @@ namespace AirPlay.Decoders.Implementations
                     }
                 }
 
-                // Decode one frame
-                // Output buffer needs to be large enough for decoded PCM
-                // FDK AAC outputs 16-bit interleaved PCM
-                int outputSamples = _pcmOutputSize / 2; // 16-bit samples
-                short[] pcmBuffer = new short[outputSamples];
+                // FDK AAC requires the output buffer to hold at least 2048 * channels samples
+                // even though the actual decoded frame may be smaller (e.g. 480 samples for AAC-ELD)
+                int decoderBufferSamples = FDK_MIN_FRAME_SAMPLES * _channels;
+                short[] pcmBuffer = new short[decoderBufferSamples];
 
                 fixed (short* pcmPtr = pcmBuffer)
                 {
-                    int err = aacDecoder_DecodeFrame(_handle, (IntPtr)pcmPtr, outputSamples, 0);
+                    int err = aacDecoder_DecodeFrame(_handle, (IntPtr)pcmPtr, decoderBufferSamples, 0);
                     if (err != AAC_DEC_OK)
                     {
                         return err;
                     }
 
-                    // Convert short[] to byte[]
-                    int byteLen = Math.Min(outputSamples * 2, output.Length);
+                    // Copy only the actual frame data (frameLength * channels * 2 bytes)
+                    int byteLen = Math.Min(_pcmOutputSize, output.Length);
                     Buffer.BlockCopy(pcmBuffer, 0, output, 0, byteLen);
                 }
             }
@@ -142,79 +149,49 @@ namespace AirPlay.Decoders.Implementations
 
         /// <summary>
         /// Build an AudioSpecificConfig for AAC-ELD.
-        /// See ISO 14496-3 for the ASC bit format.
+        /// Uses the same format as the original airplayreceiver project which is
+        /// known to work with the FDK AAC library.
         /// </summary>
         private static byte[] BuildAacEldAsc(int sampleRate, int channels, int frameLength)
         {
-            // AOT = 39 (AAC-ELD) requires extended AOT encoding:
-            // audioObjectType (5 bits) = 31 (escape), then audioObjectTypeExt (6 bits) = 39-32 = 7
-            // samplingFrequencyIndex (4 bits): 4 = 44100Hz
-            // channelConfiguration (4 bits): 2 = stereo
-            // ELD specific config: frameLengthFlag (1 bit) = 0 for 480 samples
-
+            int audioObjectType = 39; // AAC-ELD
             int freqIndex = GetSampleRateIndex(sampleRate);
 
-            // Bit layout:
-            // 5 bits: 11111 (escape = 31)
-            // 6 bits: 000111 (39 - 32 = 7)
-            // 4 bits: freqIndex
-            // 4 bits: channelConfig
-            // 3 bits: 000 (ELD specific: frameLengthFlag=0 for 480, plus padding)
-            // Plus SBR config flags
-
-            // Build bit by bit
-            var bits = new System.Collections.BitArray(64);
-            int pos = 0;
-
-            // audioObjectType = 31 (escape) -> 5 bits: 11111
-            bits[pos++] = true;
-            bits[pos++] = true;
-            bits[pos++] = true;
-            bits[pos++] = true;
-            bits[pos++] = true;
-
-            // audioObjectTypeExt = 7 (39 - 32) -> 6 bits: 000111
-            bits[pos++] = false;
-            bits[pos++] = false;
-            bits[pos++] = false;
-            bits[pos++] = true;
-            bits[pos++] = true;
-            bits[pos++] = true;
-
-            // samplingFrequencyIndex -> 4 bits
-            bits[pos++] = (freqIndex & 8) != 0;
-            bits[pos++] = (freqIndex & 4) != 0;
-            bits[pos++] = (freqIndex & 2) != 0;
-            bits[pos++] = (freqIndex & 1) != 0;
-
-            // channelConfiguration -> 4 bits
-            bits[pos++] = (channels & 8) != 0;
-            bits[pos++] = (channels & 4) != 0;
-            bits[pos++] = (channels & 2) != 0;
-            bits[pos++] = (channels & 1) != 0;
-
-            // ELD specific config:
-            // frameLengthFlag: 0 = 480 samples, 1 = 512 samples
-            bits[pos++] = (frameLength == 512);
-
-            // LDSBR present flag = 0
-            bits[pos++] = false;
-
-            // ELD extension type = 0 (end)
-            bits[pos++] = false;
-            bits[pos++] = false;
-            bits[pos++] = false;
-            bits[pos++] = false;
-
-            // Convert bits to bytes
-            int byteLen = (pos + 7) / 8;
-            byte[] result = new byte[byteLen];
-            for (int i = 0; i < pos; i++)
+            // Build ASC as a binary string (matching original airplayreceiver format)
+            string bin;
+            if (audioObjectType >= 31)
             {
-                if (bits[i])
-                {
-                    result[i / 8] |= (byte)(0x80 >> (i % 8));
-                }
+                // Extended AOT: 5 bits escape (11111) + 6 bits (AOT - 32)
+                bin = Convert.ToString(31, 2).PadLeft(5, '0');
+                bin += Convert.ToString(audioObjectType - 32, 2).PadLeft(6, '0');
+            }
+            else
+            {
+                bin = Convert.ToString(audioObjectType, 2).PadLeft(5, '0');
+            }
+
+            // ELD specific config
+            bin += Convert.ToString(freqIndex, 2).PadLeft(4, '0');
+            bin += Convert.ToString(channels, 2).PadLeft(4, '0');
+
+            // frameLengthFlag: 0 = 480 samples, 1 = 512 samples
+            bin += (frameLength == 512) ? "1" : "0";
+
+            // dependsOnCoreCoder = 0
+            bin += "0";
+
+            // extensionFlag = 0
+            bin += "0";
+
+            // Padding to byte boundary
+            while (bin.Length % 8 != 0)
+                bin += "0";
+
+            int nBytes = bin.Length / 8;
+            byte[] result = new byte[nBytes];
+            for (int i = 0; i < nBytes; i++)
+            {
+                result[i] = Convert.ToByte(bin.Substring(8 * i, 8), 2);
             }
 
             return result;
