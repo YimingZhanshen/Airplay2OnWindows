@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -29,7 +30,7 @@ namespace AirPlay.Services
         private CancellationTokenSource _cts;
         private Task _acceptTask;
         private Process _ffplayProcess;
-        private System.Collections.Generic.List<byte[]> _pendingFrames = new System.Collections.Generic.List<byte[]>();
+        private List<byte[]> _pendingFrames = new List<byte[]>();
         private bool _hasReceivedKeyFrame = false;
 
         public event EventHandler<string> OnStatusChanged;
@@ -359,7 +360,7 @@ namespace AirPlay.Services
                 if (!_connected)
                 {
                     // Buffer frames until ffplay connects.
-                    // On a new keyframe, discard older buffered frames (start fresh from latest IDR).
+                    // On a new keyframe, discard older buffered frames (start fresh from latest keyframe).
                     if (isKeyFrame)
                     {
                         _pendingFrames.Clear();

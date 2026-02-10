@@ -690,7 +690,7 @@ namespace AirPlay.Listeners
         /// <summary>
         /// Wraparound-aware comparison for 16-bit sequence numbers.
         /// Returns true if s1 is strictly before s2 in the circular sequence space.
-        /// Uses the standard approach: (s1 - s2) interpreted as signed 16-bit > 0 means s2 is ahead.
+        /// When (s1 - s2) interpreted as signed 16-bit is negative, s1 is before s2.
         /// </summary>
         private static bool SeqBefore(ushort s1, ushort s2)
         {
