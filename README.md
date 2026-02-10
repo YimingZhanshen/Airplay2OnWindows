@@ -45,7 +45,7 @@ dotnet build AirPlay.sln --configuration Release
 
 ## Building libfdk-aac on Windows
 
-The `libfdk-aac-2.dll` is required for decoding AAC-ELD audio during screen mirroring. You can build it from source:
+该 `libfdk-aac-2.dll` is required for decoding AAC-ELD audio during screen mirroring. You can build it from source:
 
 1. Install [MSYS2](https://www.msys2.org/)
 2. Open MSYS2 MinGW 64-bit terminal and run:
@@ -83,7 +83,6 @@ Apple Device ──AirPlay──► AirPlay Receiver (.NET 8)
 
 Based on open-source AirPlay protocol implementations. Special thanks to:
 - [SteeBono/airplayreceiver](https://github.com/SteeBono/airplayreceiver) — Original C# AirPlay receiver
-- [itskenny0/airplayreceiver](https://github.com/itskenny0/airplayreceiver) — FDK-AAC mirroring audio implementation
 - [UxPlay](https://github.com/FDH2/UxPlay) — AirPlay protocol reference
 - [mstorsjo/fdk-aac](https://github.com/mstorsjo/fdk-aac) — FDK-AAC codec library
 
