@@ -133,20 +133,30 @@ namespace AirPlay.Services
 
         private void LaunchFfplay(string pipePath)
         {
+            // Low-latency ffplay flags:
+            //   -probesize 32768: small probe size (pre-buffered SPS/PPS+IDR makes this sufficient)
+            //   -analyzeduration 0: don't wait to analyze stream duration
+            //   -fflags nobuffer+discardcorrupt: no input buffering, discard corrupt frames
+            //   -flags low_delay: enable low-delay decoding
+            //   -framedrop: drop frames if display can't keep up
+            //   -avioflags direct: bypass I/O buffering on pipe reads
+            //   -sync ext: use external clock (display frames immediately without A/V sync delay)
+            var ffplayArgs = $"-f h264 -probesize 32768 -analyzeduration 0 -fflags nobuffer+discardcorrupt -flags low_delay -framedrop -avioflags direct -sync ext \"{pipePath}\"";
+
             try
             {
                 var ffplayPath = FindFfplay();
                 if (ffplayPath == null)
                 {
                     Console.WriteLine("ffplay not found. Please ensure ffplay is in the application directory or PATH.");
-                    Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 32768 -analyzeduration 1000000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
+                    Console.WriteLine($"  You can manually connect with: ffplay {ffplayArgs}");
                     return;
                 }
 
                 var psi = new ProcessStartInfo
                 {
                     FileName = ffplayPath,
-                    Arguments = $"-f h264 -probesize 32768 -analyzeduration 1000000 -fflags nobuffer -flags low_delay -framedrop \"{pipePath}\"",
+                    Arguments = ffplayArgs,
                     UseShellExecute = false,
                     CreateNoWindow = false
                 };
@@ -160,7 +170,7 @@ namespace AirPlay.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to launch ffplay: {ex.Message}");
-                Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 32768 -analyzeduration 1000000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
+                Console.WriteLine($"  You can manually connect with: ffplay {ffplayArgs}");
             }
         }
 
