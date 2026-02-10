@@ -42,29 +42,29 @@ jobs:
         Copy-Item "$($binDir.FullName)\ffmpeg.exe" -Destination ./publish/win-x64/
         Copy-Item "$($binDir.FullName)\ffplay.exe" -Destination ./publish/win-x64/
 
-    - name: Download libfdk-aac
-      shell: pwsh
+    - name: Build libfdk-aac from source
+      shell: bash
       run: |
-        # Download pre-built FDK-AAC for Windows x64
-        $fdkUrl = "https://github.com/nicholastay/libfdk-aac-build/releases/download/v2.0.3/libfdk-aac-v2.0.3-win-x64.zip"
-        Invoke-WebRequest -Uri $fdkUrl -OutFile libfdk-aac.zip
-        Expand-Archive -Path libfdk-aac.zip -DestinationPath libfdk-aac-tmp
-        # Find and copy libfdk-aac-2.dll to publish directory
-        $dllFile = Get-ChildItem -Path libfdk-aac-tmp -Recurse -Filter "libfdk-aac-2.dll" | Select-Object -First 1
-        if ($dllFile) {
-          Copy-Item $dllFile.FullName -Destination ./publish/win-x64/
-          Write-Host "Copied libfdk-aac-2.dll to publish directory"
-        } else {
-          # Try alternative name
-          $dllFile = Get-ChildItem -Path libfdk-aac-tmp -Recurse -Filter "*.dll" | Select-Object -First 1
-          if ($dllFile) {
-            Copy-Item $dllFile.FullName -Destination ./publish/win-x64/libfdk-aac-2.dll
-            Write-Host "Copied $($dllFile.Name) as libfdk-aac-2.dll to publish directory"
-          } else {
-            Write-Host "WARNING: Could not find libfdk-aac DLL in downloaded archive"
-            Get-ChildItem -Path libfdk-aac-tmp -Recurse | ForEach-Object { Write-Host $_.FullName }
-          }
-        }
+        # Build FDK-AAC from official source using MSYS2 (pre-installed on windows-latest)
+        export MSYSTEM=MINGW64
+        export PATH="/c/msys64/mingw64/bin:/c/msys64/usr/bin:$PATH"
+
+        # Install build dependencies
+        pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make autoconf automake libtool
+
+        # Clone and build fdk-aac
+        git clone --depth 1 https://github.com/mstorsjo/fdk-aac.git fdk-aac-src
+        cd fdk-aac-src
+
+        # Use CMake for a simpler build
+        mkdir build && cd build
+        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ..
+        cmake --build . --config Release
+
+        # Find and copy the DLL
+        find . -name "*.dll" -type f
+        cp -v $(find . -name "fdk-aac*.dll" -o -name "libfdk-aac*.dll" | head -1) ../../publish/win-x64/libfdk-aac-2.dll
+        echo "Successfully built and copied libfdk-aac-2.dll"
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
