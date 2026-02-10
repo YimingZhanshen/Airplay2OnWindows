@@ -29,6 +29,8 @@ namespace AirPlay.Services
         private CancellationTokenSource _cts;
         private Task _acceptTask;
         private Process _ffplayProcess;
+        private System.Collections.Generic.List<byte[]> _pendingFrames = new System.Collections.Generic.List<byte[]>();
+        private bool _hasReceivedKeyFrame = false;
 
         public event EventHandler<string> OnStatusChanged;
 
@@ -136,14 +138,14 @@ namespace AirPlay.Services
                 if (ffplayPath == null)
                 {
                     Console.WriteLine("ffplay not found. Please ensure ffplay is in the application directory or PATH.");
-                    Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 32 -analyzeduration 0 -fflags nobuffer -flags low_delay {pipePath}");
+                    Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 2048000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
                     return;
                 }
 
                 var psi = new ProcessStartInfo
                 {
                     FileName = ffplayPath,
-                    Arguments = $"-f h264 -probesize 32 -analyzeduration 0 -fflags nobuffer -flags low_delay \"{pipePath}\"",
+                    Arguments = $"-f h264 -probesize 2048000 -fflags nobuffer -flags low_delay -framedrop \"{pipePath}\"",
                     UseShellExecute = false,
                     CreateNoWindow = false
                 };
@@ -157,7 +159,7 @@ namespace AirPlay.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to launch ffplay: {ex.Message}");
-                Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 32 -analyzeduration 0 -fflags nobuffer -flags low_delay {pipePath}");
+                Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 2048000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
             }
         }
 
@@ -233,6 +235,8 @@ namespace AirPlay.Services
             _cts = null;
 
             _connected = false;
+            _pendingFrames.Clear();
+            _hasReceivedKeyFrame = false;
 
             try { _pipeServer?.Dispose(); } catch { }
             _pipeServer = null;
@@ -260,6 +264,7 @@ namespace AirPlay.Services
                     lock (_lock)
                     {
                         _connected = true;
+                        FlushPendingFrames();
                     }
                     Console.WriteLine("Video player connected!");
                     OnStatusChanged?.Invoke(this, "connected");
@@ -285,6 +290,7 @@ namespace AirPlay.Services
                 lock (_lock)
                 {
                     _connected = true;
+                    FlushPendingFrames();
                 }
                 Console.WriteLine("Video player connected to FIFO!");
                 OnStatusChanged?.Invoke(this, "connected");
@@ -299,19 +305,77 @@ namespace AirPlay.Services
         }
 
         /// <summary>
+        /// Flush buffered frames to the pipe. Must be called under _lock.
+        /// </summary>
+        private void FlushPendingFrames()
+        {
+            if (_pendingFrames.Count == 0) return;
+
+            Console.WriteLine($"Flushing {_pendingFrames.Count} buffered frames to video player...");
+            try
+            {
+                foreach (var frameData in _pendingFrames)
+                {
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    {
+                        _pipeServer?.Write(frameData, 0, frameData.Length);
+                    }
+                    else
+                    {
+                        _unixPipeStream?.Write(frameData, 0, frameData.Length);
+                    }
+                    _frameCount++;
+                }
+
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    _pipeServer?.Flush();
+                }
+                else
+                {
+                    _unixPipeStream?.Flush();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error flushing buffered frames: {ex.Message}");
+            }
+            _pendingFrames.Clear();
+        }
+
+        /// <summary>
         /// Write H.264 frame data to the pipe.
+        /// Buffers frames before ffplay connects and replays them on connection.
         /// </summary>
         public void WriteFrame(H264Data data)
         {
             lock (_lock)
             {
-                if (_disposed || !_connected) return;
+                if (_disposed) return;
                 if (data.Data == null || data.Length <= 0) return;
+
+                bool isKeyFrame = data.FrameType == 5;
+
+                if (!_connected)
+                {
+                    // Buffer frames until ffplay connects.
+                    // On a new keyframe, discard older buffered frames (start fresh from latest IDR).
+                    if (isKeyFrame)
+                    {
+                        _pendingFrames.Clear();
+                        _hasReceivedKeyFrame = true;
+                    }
+                    if (_hasReceivedKeyFrame)
+                    {
+                        var copy = new byte[data.Length];
+                        Array.Copy(data.Data, 0, copy, 0, data.Length);
+                        _pendingFrames.Add(copy);
+                    }
+                    return;
+                }
 
                 try
                 {
-                    bool isKeyFrame = data.FrameType == 5;
-
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                     {
                         if (_pipeServer != null && _pipeServer.IsConnected)
