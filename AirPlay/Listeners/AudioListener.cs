@@ -27,6 +27,7 @@ namespace AirPlay.Listeners
         private readonly OmgHax _omgHax = new OmgHax();
 
         private IDecoder _decoder;
+        private readonly object _decoderLock = new object();
         private ulong _sync_time;
         private ulong _sync_timestamp;
         private ushort _controlSequenceNumber = 0;
@@ -494,94 +495,97 @@ namespace AirPlay.Listeners
 
         private void InitializeDecoder (Session session)
         {
-            if (_decoder != null) return;
-
-            var audioFormat = session.AudioFormat;
-            var spf = session.AudioSamplesPerFrame;
-
-            if (audioFormat == AudioFormat.ALAC)
+            lock (_decoderLock)
             {
-                // RTP info: 96 AppleLossless, 96 352 0 16 40 10 14 2 255 0 0 44100
-                // (ALAC -> PCM)
+                if (_decoder != null) return;
 
-                var frameLength = spf > 0 ? spf : 352;
-                var numChannels = 2;
-                var bitDepth = 16;
-                var sampleRate = 44100;
+                var audioFormat = session.AudioFormat;
+                var spf = session.AudioSamplesPerFrame;
 
-                _decoder = new ALACDecoder();
-                _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
-            }
-            else if (audioFormat == AudioFormat.AAC)
-            {
-                // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-main; constantDuration=1024
-                // (AAC-MAIN -> PCM)
-
-                var frameLength = spf > 0 ? spf : 1024;
-                var numChannels = 2;
-                var bitDepth = 16;
-                var sampleRate = 44100;
-
-                _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_MAIN, 1);
-                _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
-            }
-            else if(audioFormat == AudioFormat.AAC_ELD)
-            {
-                // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
-                // (AAC-ELD -> PCM) using FFmpeg subprocess decoder
-
-                var frameLength = spf > 0 ? spf : 480;
-                var numChannels = 2;
-                var bitDepth = 16;
-                var sampleRate = 44100;
-
-                try
+                if (audioFormat == AudioFormat.ALAC)
                 {
-                    var aacEldDecoder = new Decoders.Implementations.FFmpegAacEldDecoder();
-                    var ret = aacEldDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
-                    if (ret == 0)
+                    // RTP info: 96 AppleLossless, 96 352 0 16 40 10 14 2 255 0 0 44100
+                    // (ALAC -> PCM)
+
+                    var frameLength = spf > 0 ? spf : 352;
+                    var numChannels = 2;
+                    var bitDepth = 16;
+                    var sampleRate = 44100;
+
+                    _decoder = new ALACDecoder();
+                    _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                }
+                else if (audioFormat == AudioFormat.AAC)
+                {
+                    // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-main; constantDuration=1024
+                    // (AAC-MAIN -> PCM)
+
+                    var frameLength = spf > 0 ? spf : 1024;
+                    var numChannels = 2;
+                    var bitDepth = 16;
+                    var sampleRate = 44100;
+
+                    _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_MAIN, 1);
+                    _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                }
+                else if(audioFormat == AudioFormat.AAC_ELD)
+                {
+                    // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
+                    // (AAC-ELD -> PCM) using FFmpeg subprocess decoder with LATM wrapping
+
+                    var frameLength = spf > 0 ? spf : 480;
+                    var numChannels = 2;
+                    var bitDepth = 16;
+                    var sampleRate = 44100;
+
+                    try
                     {
-                        _decoder = aacEldDecoder;
+                        var aacEldDecoder = new Decoders.Implementations.FFmpegAacEldDecoder();
+                        var ret = aacEldDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                        if (ret == 0)
+                        {
+                            _decoder = aacEldDecoder;
+                        }
+                        else
+                        {
+                            Console.WriteLine($"FFmpeg AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
+                            aacEldDecoder.Dispose();
+                            _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                            _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Console.WriteLine($"FFmpeg AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
-                        aacEldDecoder.Dispose();
+                        Console.WriteLine($"FFmpeg AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
                         _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
                         _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                     }
                 }
-                catch (Exception ex)
+                else if (audioFormat == AudioFormat.PCM)
                 {
-                    Console.WriteLine($"FFmpeg AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
-                    _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
-                    _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
-                }
-            }
-            else if (audioFormat == AudioFormat.PCM)
-            {
-                // Raw PCM audio - no decoding needed
-                _decoder = new PCMDecoder();
-            }
-            else
-            {
-                // Determine format from compression type if audioFormat is unknown
-                if (session.AudioCompressionType == 1)
-                {
-                    // ct=1 = ALAC
-                    var frameLength = spf > 0 ? spf : 352;
-                    _decoder = new ALACDecoder();
-                    _decoder.Config(44100, 2, 16, frameLength);
-                }
-                else if (session.AudioCompressionType == 0)
-                {
-                    // ct=0 = PCM
+                    // Raw PCM audio - no decoding needed
                     _decoder = new PCMDecoder();
                 }
                 else
                 {
-                    // Default fallback
-                    _decoder = new PCMDecoder();
+                    // Determine format from compression type if audioFormat is unknown
+                    if (session.AudioCompressionType == 1)
+                    {
+                        // ct=1 = ALAC
+                        var frameLength = spf > 0 ? spf : 352;
+                        _decoder = new ALACDecoder();
+                        _decoder.Config(44100, 2, 16, frameLength);
+                    }
+                    else if (session.AudioCompressionType == 0)
+                    {
+                        // ct=0 = PCM
+                        _decoder = new PCMDecoder();
+                    }
+                    else
+                    {
+                        // Default fallback
+                        _decoder = new PCMDecoder();
+                    }
                 }
             }
         }
