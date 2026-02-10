@@ -537,16 +537,16 @@ namespace AirPlay.Listeners
 
                 try
                 {
-                    var ffmpegDecoder = new Decoders.Implementations.FdkAacEldDecoder();
-                    var ret = ffmpegDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                    var aacEldDecoder = new Decoders.Implementations.FFmpegAacEldDecoder();
+                    var ret = aacEldDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                     if (ret == 0)
                     {
-                        _decoder = ffmpegDecoder;
+                        _decoder = aacEldDecoder;
                     }
                     else
                     {
                         Console.WriteLine($"FFmpeg AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
-                        ffmpegDecoder.Dispose();
+                        aacEldDecoder.Dispose();
                         _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
                         _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                     }

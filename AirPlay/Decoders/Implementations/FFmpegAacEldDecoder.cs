@@ -20,8 +20,11 @@ using AirPlay.Models.Enums;
 
 namespace AirPlay.Decoders.Implementations
 {
-    public class FdkAacEldDecoder : IDecoder, IDisposable
+    public class FFmpegAacEldDecoder : IDecoder, IDisposable
     {
+        private const int MAX_READ_ATTEMPTS = 50;
+        private const int PROCESS_EXIT_TIMEOUT_MS = 1000;
+
         private Process _ffmpegProcess;
         private BinaryWriter _ffmpegInput;
         private Stream _ffmpegOutput;
@@ -38,7 +41,7 @@ namespace AirPlay.Decoders.Implementations
 
         public AudioFormat Type => AudioFormat.AAC_ELD;
 
-        public FdkAacEldDecoder()
+        public FFmpegAacEldDecoder()
         {
         }
 
@@ -122,7 +125,7 @@ namespace AirPlay.Decoders.Implementations
                 // Read decoded PCM from FFmpeg stdout
                 int bytesToRead = _pcmOutputSize;
                 int totalRead = 0;
-                int maxAttempts = 50; // 50ms max wait
+                int maxAttempts = MAX_READ_ATTEMPTS;
 
                 while (totalRead < bytesToRead && maxAttempts > 0)
                 {
@@ -182,11 +185,17 @@ namespace AirPlay.Decoders.Implementations
                 _disposed = true;
                 try
                 {
+                    // Close stdin first for graceful FFmpeg shutdown
                     _ffmpegInput?.Close();
+
                     if (_ffmpegProcess != null && !_ffmpegProcess.HasExited)
                     {
-                        _ffmpegProcess.Kill();
-                        _ffmpegProcess.WaitForExit(1000);
+                        // Wait for graceful exit, then force kill if needed
+                        if (!_ffmpegProcess.WaitForExit(PROCESS_EXIT_TIMEOUT_MS))
+                        {
+                            _ffmpegProcess.Kill();
+                            _ffmpegProcess.WaitForExit(PROCESS_EXIT_TIMEOUT_MS);
+                        }
                     }
                     _ffmpegProcess?.Dispose();
                 }
