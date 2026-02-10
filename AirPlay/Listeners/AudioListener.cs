@@ -101,6 +101,7 @@ namespace AirPlay.Listeners
                             }
 
                             // Dequeue and play audio received on control socket (used during screen mirroring)
+                            var pcmBatch = new System.Collections.Generic.List<PcmData>();
                             byte[] audiobuf;
                             int audiobuflen = 0;
                             uint timestamp = 0;
@@ -116,8 +117,14 @@ namespace AirPlay.Listeners
                                     pcmData.Data = audiobuf;
                                     pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
 
-                                    _receiver.OnPCMData(pcmData);
+                                    pcmBatch.Add(pcmData);
                                 }
+                            }
+
+                            // Deliver PCM outside the lock to avoid blocking the data handler
+                            foreach (var pcm in pcmBatch)
+                            {
+                                _receiver.OnPCMData(pcm);
                             }
                         }
                         else if (type_c == 0x54)
@@ -217,6 +224,7 @@ namespace AirPlay.Listeners
                         }
 
                         // Dequeue all available frames from buffer
+                        var pcmBatch = new System.Collections.Generic.List<PcmData>();
                         lock (_bufferLock)
                         {
                             while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
@@ -230,8 +238,14 @@ namespace AirPlay.Listeners
 
                                 pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
 
-                                _receiver.OnPCMData(pcmData);
+                                pcmBatch.Add(pcmData);
                             }
+                        }
+
+                        // Deliver PCM outside the lock to avoid blocking the control handler
+                        foreach (var pcm in pcmBatch)
+                        {
+                            _receiver.OnPCMData(pcm);
                         }
 
                         /* Handle possible resend requests */
