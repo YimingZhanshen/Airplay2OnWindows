@@ -83,7 +83,6 @@ Apple 设备 ──AirPlay──► AirPlay 接收器 (.NET 8)
 
 基于开源 AirPlay 协议实现。特别感谢：
 - [SteeBono/airplayreceiver](https://github.com/SteeBono/airplayreceiver) — 原始 C# AirPlay 接收器
-- [itskenny0/airplayreceiver](https://github.com/itskenny0/airplayreceiver) — FDK-AAC 镜像音频实现
 - [UxPlay](https://github.com/FDH2/UxPlay) — AirPlay 协议参考
 - [mstorsjo/fdk-aac](https://github.com/mstorsjo/fdk-aac) — FDK-AAC 编解码器库
 
