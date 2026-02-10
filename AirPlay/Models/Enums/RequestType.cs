@@ -12,6 +12,7 @@
         FLUSH = 7,
         TEARDOWN = 8,
         OPTIONS = 9,
-        PAUSE = 10
+        PAUSE = 10,
+        SETPEERS = 11
     }
 }

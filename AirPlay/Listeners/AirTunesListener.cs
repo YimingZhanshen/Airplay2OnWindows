@@ -291,6 +291,14 @@ namespace AirPlay.Listeners
                             // Always one foreach request
                             var stream = (Dictionary<object, object>)((object[])plist["streams"])[0];
                             var type = (short)stream["type"];
+                            Console.WriteLine($"[DEBUG-SETUP] Stream type={type}, keys=[{string.Join(", ", stream.Keys)}]");
+                            foreach (var kv in stream)
+                            {
+                                if (kv.Value is byte[] ba)
+                                    Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = byte[{ba.Length}]");
+                                else
+                                    Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = {kv.Value}");
+                            }
 
                             // If screen Mirroring
                             if (type == 110)
@@ -388,6 +396,7 @@ namespace AirPlay.Listeners
                         }
                         else
                         {
+                            Console.WriteLine($"[DEBUG-SETUP] Initial SETUP (keys/timing): et={plist.Contains("et")}, ekey={plist.Contains("ekey")}, eiv={plist.Contains("eiv")}, isScreenMirroringSession={plist.Contains("isScreenMirroringSession")}, timingPort={plist.Contains("timingPort")}");
                             // Read ekey and eiv used to decode video and audio data
                             if (plist.Contains("et"))
                             {
@@ -483,6 +492,7 @@ namespace AirPlay.Listeners
             }
             if (request.Type == RequestType.RECORD)
             {
+                Console.WriteLine("[DEBUG-RTSP] RECORD request received");
                 response.Headers.Add("Audio-Latency", "0"); // 11025
                 // response.Headers.Add("Audio-Jack-Status", "connected; type=analog");
             }
@@ -533,11 +543,16 @@ namespace AirPlay.Listeners
             }
             if(request.Type == RequestType.OPTIONS)
             {
-                response.Headers.Add("Public", "SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER, ANNOUNCE");
+                response.Headers.Add("Public", "SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER, ANNOUNCE, SETPEERS");
             }
             if(request.Type == RequestType.ANNOUNCE)
             {
 
+            }
+            if(request.Type == RequestType.SETPEERS)
+            {
+                Console.WriteLine("[DEBUG-RTSP] SETPEERS request received - returning 200 OK");
+                // Just acknowledge the peer list, no action needed
             }
             if(request.Type == RequestType.FLUSH)
             {

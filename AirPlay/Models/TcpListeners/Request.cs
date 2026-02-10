@@ -162,6 +162,10 @@ namespace AirPlay.Models
             {
                 return RequestType.PAUSE;
             }
+            if (hex.StartsWith(RequestConst.SETPEERS, StringComparison.OrdinalIgnoreCase))
+            {
+                return RequestType.SETPEERS;
+            }
 
             return null;
         }

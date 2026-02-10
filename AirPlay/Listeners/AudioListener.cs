@@ -408,26 +408,39 @@ namespace AirPlay.Listeners
 	        return raop_buffer;
         }
 
+        private int _queueCallCount = 0;
+
         public int RaopBufferQueue(RaopBuffer raop_buffer, byte[] data, ushort datalen, Session session, IBufferedCipher aesCbcDecrypt)
         {
             int encryptedlen;
             RaopBufferEntry entry;
 
+            _queueCallCount++;
+
             /* Check packet data length is valid */
             if (datalen < 12 || datalen > RAOP_PACKET_LENGTH)
             {
+                if (_queueCallCount <= 5)
+                    Console.WriteLine($"[DEBUG-QUEUE] #{_queueCallCount}: REJECT invalid length={datalen}");
                 return -1;
             }
 
             var seqnum = (ushort)((data[2] << 8) | data[3]);
             if (datalen == 16 && data[12] == 0x0 && data[13] == 0x68 && data[14] == 0x34 && data[15] == 0x0)
             {
+                if (_queueCallCount <= 5)
+                    Console.WriteLine($"[DEBUG-QUEUE] #{_queueCallCount}: no-data marker, seqnum={seqnum}");
                 return 0;
             }
+
+            if (_queueCallCount <= 10 || _queueCallCount % 500 == 0)
+                Console.WriteLine($"[DEBUG-QUEUE] #{_queueCallCount}: seqnum={seqnum}, datalen={datalen}, payloadSize={datalen - 12}, bufferEmpty={raop_buffer.IsEmpty}, firstSeq={raop_buffer.FirstSeqNum}, lastSeq={raop_buffer.LastSeqNum}");
 
             // Ignore, old
             if (!raop_buffer.IsEmpty && seqnum < raop_buffer.FirstSeqNum && seqnum != 0)
             {
+                if (_queueCallCount <= 10)
+                    Console.WriteLine($"[DEBUG-QUEUE] #{_queueCallCount}: SKIP old seqnum={seqnum} < firstSeqNum={raop_buffer.FirstSeqNum}");
                 return 0;
             }
 
