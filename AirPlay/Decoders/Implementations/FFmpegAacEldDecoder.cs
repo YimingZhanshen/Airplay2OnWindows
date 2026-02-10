@@ -5,15 +5,15 @@
  * for AAC-ELD because the pre-built binary doesn't include ER format support.
  * SharpJaad.AAC also doesn't support AAC-ELD.
  *
- * This decoder pipes raw AAC-ELD frames wrapped in LOAS/LATM through FFmpeg
- * for decoding. ADTS format does NOT support AAC-ELD (its 2-bit profile field
- * cannot represent AOT 39). LATM supports all AAC profiles including AAC-ELD.
+ * This decoder pipes raw AAC-ELD frames wrapped in ADTS headers through FFmpeg
+ * for decoding. While ADTS headers can only encode AAC-LC profile (2-bit field),
+ * FFmpeg's AAC decoder handles the actual bitstream content regardless of the
+ * ADTS profile indicator. The ADTS header serves as a framing/sync mechanism.
  *
  * Reference: UxPlay uses GStreamer's avdec_aac (which wraps FFmpeg) for the same purpose.
  */
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -35,8 +35,8 @@ namespace AirPlay.Decoders.Implementations
         private int _frameLength;
         private bool _disposed;
         private bool _initialized;
-        private int _firstFrame = 1; // 1 = true, 0 = false (for thread-safe Interlocked access)
-        private int _freqIdx;
+        private readonly byte[] _adtsHeader = new byte[7];
+        private int _adtsFreqIdx;
 
         public AudioFormat Type => AudioFormat.AAC_ELD;
 
@@ -50,17 +50,17 @@ namespace AirPlay.Decoders.Implementations
             _sampleRate = sampleRate;
             _frameLength = frameLength;
             _pcmOutputSize = frameLength * channels * (bitDepth / 8);
-            _freqIdx = GetSampleRateIndex(sampleRate);
+            _adtsFreqIdx = GetSampleRateIndex(sampleRate);
 
             try
             {
                 // Start FFmpeg process:
-                // Input: AAC-ELD frames wrapped in LOAS/LATM via stdin pipe
+                // Input: AAC frames wrapped in ADTS headers via stdin pipe
                 // Output: raw PCM S16LE via stdout pipe
                 var psi = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
-                    Arguments = $"-hide_banner -loglevel error -f latm -i pipe:0 -f s16le -acodec pcm_s16le -ar {sampleRate} -ac {channels} pipe:1",
+                    Arguments = $"-hide_banner -loglevel error -f aac -i pipe:0 -f s16le -acodec pcm_s16le -ar {sampleRate} -ac {channels} pipe:1",
                     UseShellExecute = false,
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
@@ -77,14 +77,26 @@ namespace AirPlay.Decoders.Implementations
                 // Drain stderr in background to prevent pipe deadlock
                 var stderrThread = new Thread(() =>
                 {
-                    try { _ffmpegProcess.StandardError.ReadToEnd(); }
+                    try
+                    {
+                        using var reader = _ffmpegProcess.StandardError;
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            // Only log critical errors, not per-frame decode warnings
+                            if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
+                            {
+                                Console.WriteLine($"FFmpeg: {line}");
+                            }
+                        }
+                    }
                     catch { /* ignore */ }
                 });
                 stderrThread.IsBackground = true;
                 stderrThread.Start();
 
                 _initialized = true;
-                Console.WriteLine($"FFmpeg AAC-ELD decoder started (LATM): {sampleRate}Hz, {channels}ch, {bitDepth}bit, frameLength={frameLength}");
+                Console.WriteLine($"FFmpeg AAC-ELD decoder started: {sampleRate}Hz, {channels}ch, {bitDepth}bit, frameLength={frameLength}");
                 return 0;
             }
             catch (Exception ex)
@@ -107,11 +119,16 @@ namespace AirPlay.Decoders.Implementations
 
             try
             {
-                // Build LOAS/LATM frame wrapping the raw AAC-ELD data
-                bool includeConfig = Interlocked.Exchange(ref _firstFrame, 0) == 1;
-                byte[] loasFrame = BuildLoasFrame(input, includeConfig);
+                // Wrap the raw AAC frame in an ADTS header for FFmpeg to parse.
+                // ADTS profile is set to AAC-LC (profile=2) since ADTS only has a 2-bit
+                // profile field and cannot represent AAC-ELD. FFmpeg's decoder handles
+                // the actual bitstream content regardless of the ADTS profile indicator.
+                int frameLen = input.Length + 7; // ADTS header is 7 bytes
+                BuildAdtsHeader(_adtsHeader, frameLen, 2, _adtsFreqIdx, _channels);
 
-                _ffmpegInput.Write(loasFrame, 0, loasFrame.Length);
+                // Write ADTS header + raw AAC data to FFmpeg stdin
+                _ffmpegInput.Write(_adtsHeader, 0, 7);
+                _ffmpegInput.Write(input, 0, input.Length);
                 _ffmpegInput.Flush();
 
                 // Read decoded PCM from FFmpeg stdout
@@ -146,124 +163,18 @@ namespace AirPlay.Decoders.Implementations
         }
 
         /// <summary>
-        /// Build a LOAS/LATM frame containing the raw AAC-ELD data.
-        /// LOAS (Low Overhead Audio Stream) sync layer wraps an AudioMuxElement.
-        /// The first frame includes the full StreamMuxConfig; subsequent frames
-        /// reuse it (useSameStreamMux=1).
+        /// Build a 7-byte ADTS header for wrapping raw AAC frames.
+        /// Used as a framing/sync mechanism for FFmpeg's AAC demuxer.
         /// </summary>
-        private byte[] BuildLoasFrame(byte[] aacFrame, bool includeConfig)
+        private static void BuildAdtsHeader(byte[] header, int packetLen, int profile, int freqIdx, int chanCfg)
         {
-            // Build the AudioMuxElement as a bitstream
-            var bits = new BitWriter();
-
-            if (includeConfig)
-            {
-                // useSameStreamMux = 0 (include StreamMuxConfig)
-                bits.WriteBits(0, 1);
-                WriteStreamMuxConfig(bits);
-            }
-            else
-            {
-                // useSameStreamMux = 1 (reuse previous config)
-                bits.WriteBits(1, 1);
-            }
-
-            // PayloadLengthInfo for allStreamsSameTimeFraming=1, progSIndx=0, laySIndx=0
-            // Length is encoded as: N bytes of 0xFF followed by a final byte < 0xFF
-            int remaining = aacFrame.Length;
-            while (remaining >= 255)
-            {
-                bits.WriteBits(255, 8);
-                remaining -= 255;
-            }
-            bits.WriteBits(remaining, 8);
-
-            // PayloadMux: the raw AAC-ELD frame data
-            for (int i = 0; i < aacFrame.Length; i++)
-            {
-                bits.WriteBits(aacFrame[i], 8);
-            }
-
-            // otherDataPresent = 0 already implied by StreamMuxConfig setting
-
-            byte[] audioMuxElement = bits.ToByteArray();
-
-            // LOAS sync layer: 0x56E0 | (length & 0x1FFF)
-            int audioMuxLength = audioMuxElement.Length;
-            byte[] loasFrame = new byte[3 + audioMuxLength];
-            loasFrame[0] = 0x56;
-            loasFrame[1] = (byte)(0xE0 | ((audioMuxLength >> 8) & 0x1F));
-            loasFrame[2] = (byte)(audioMuxLength & 0xFF);
-            Array.Copy(audioMuxElement, 0, loasFrame, 3, audioMuxLength);
-
-            return loasFrame;
-        }
-
-        /// <summary>
-        /// Write StreamMuxConfig for AAC-ELD into the bitstream.
-        /// ISO 14496-3 Table 1.42
-        /// </summary>
-        private void WriteStreamMuxConfig(BitWriter bits)
-        {
-            // audioMuxVersion = 0
-            bits.WriteBits(0, 1);
-            // allStreamsSameTimeFraming = 1
-            bits.WriteBits(1, 1);
-            // numSubFrames = 0 (1 subframe)
-            bits.WriteBits(0, 6);
-            // numProgram = 0 (1 program)
-            bits.WriteBits(0, 4);
-            // numLayer = 0 (1 layer)
-            bits.WriteBits(0, 3);
-
-            // AudioSpecificConfig for AAC-ELD (ISO 14496-3 Table 1.15)
-            WriteAudioSpecificConfig(bits);
-
-            // frameLengthType = 0 (variable frame length)
-            bits.WriteBits(0, 3);
-            // latmBufferFullness = 0xFF (variable bitrate)
-            bits.WriteBits(0xFF, 8);
-
-            // otherDataPresent = 0
-            bits.WriteBits(0, 1);
-            // crcCheckPresent = 0
-            bits.WriteBits(0, 1);
-        }
-
-        /// <summary>
-        /// Write AudioSpecificConfig for AAC-ELD.
-        /// ISO 14496-3 Table 1.15
-        /// </summary>
-        private void WriteAudioSpecificConfig(BitWriter bits)
-        {
-            // audioObjectType = 39 (AAC-ELD)
-            // Since 39 >= 31, write 5 bits of 31 + 6 bits of (39-32) = 7
-            bits.WriteBits(31, 5);
-            bits.WriteBits(7, 6);
-
-            // samplingFrequencyIndex
-            bits.WriteBits(_freqIdx, 4);
-            // If freqIdx == 0xF, write 24-bit samplingFrequency (not needed for standard rates)
-
-            // channelConfiguration
-            bits.WriteBits(_channels, 4);
-
-            // SBR/PS extension: not present for AAC-ELD
-            // (AAC-ELD specific config follows)
-
-            // ELDSpecificConfig (ISO 14496-3 Table 4.180)
-            // frameLengthFlag: 0 = 512 samples (480 after windowing), 1 = 480 samples
-            bits.WriteBits(_frameLength == 480 ? 1 : 0, 1);
-            // aacSectionDataResilienceFlag = 0
-            bits.WriteBits(0, 1);
-            // aacScalefactorDataResilienceFlag = 0
-            bits.WriteBits(0, 1);
-            // aacSpectralDataResilienceFlag = 0
-            bits.WriteBits(0, 1);
-
-            // ldSbrPresentFlag = 0 (no LD-SBR)
-            bits.WriteBits(0, 1);
-            // No further extension data
+            header[0] = 0xFF;
+            header[1] = 0xF1; // MPEG-4, Layer 0, no CRC
+            header[2] = (byte)(((profile - 1) << 6) | (freqIdx << 2) | (chanCfg >> 2));
+            header[3] = (byte)(((chanCfg & 3) << 6) | (packetLen >> 11));
+            header[4] = (byte)((packetLen >> 3) & 0xFF);
+            header[5] = (byte)(((packetLen & 7) << 5) | 0x1F);
+            header[6] = 0xFC;
         }
 
         private static int GetSampleRateIndex(int sampleRate)
@@ -299,45 +210,6 @@ namespace AirPlay.Decoders.Implementations
                     _ffmpegProcess?.Dispose();
                 }
                 catch { /* ignore cleanup errors */ }
-            }
-        }
-
-        /// <summary>
-        /// Helper class for writing individual bits into a byte array.
-        /// Used to construct LOAS/LATM bitstream fields.
-        /// </summary>
-        private class BitWriter
-        {
-            private readonly List<byte> _bytes = new List<byte>();
-            private int _currentByte = 0;
-            private int _bitsInCurrentByte = 0;
-
-            public void WriteBits(int value, int numBits)
-            {
-                for (int i = numBits - 1; i >= 0; i--)
-                {
-                    _currentByte = (_currentByte << 1) | ((value >> i) & 1);
-                    _bitsInCurrentByte++;
-
-                    if (_bitsInCurrentByte == 8)
-                    {
-                        _bytes.Add((byte)_currentByte);
-                        _currentByte = 0;
-                        _bitsInCurrentByte = 0;
-                    }
-                }
-            }
-
-            public byte[] ToByteArray()
-            {
-                var result = new List<byte>(_bytes);
-                if (_bitsInCurrentByte > 0)
-                {
-                    // Pad remaining bits with zeros
-                    int padded = _currentByte << (8 - _bitsInCurrentByte);
-                    result.Add((byte)padded);
-                }
-                return result.ToArray();
             }
         }
     }
