@@ -140,8 +140,8 @@ namespace AirPlay.Services
             //   -flags low_delay: enable low-delay decoding
             //   -framedrop: drop frames if display can't keep up
             //   -avioflags direct: bypass I/O buffering on pipe reads
-            //   -sync ext: use external clock (display frames immediately without A/V sync delay)
-            var ffplayArgs = $"-f h264 -probesize 32768 -analyzeduration 0 -fflags nobuffer+discardcorrupt -flags low_delay -framedrop -avioflags direct -sync ext \"{pipePath}\"";
+            //   -vf setpts=0: zero out PTS so frames display immediately without pacing delay
+            var ffplayArgs = $"-f h264 -probesize 32768 -analyzeduration 0 -fflags nobuffer+discardcorrupt -flags low_delay -framedrop -avioflags direct -vf setpts=0 \"{pipePath}\"";
 
             try
             {
