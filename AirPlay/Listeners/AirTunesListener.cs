@@ -333,7 +333,7 @@ namespace AirPlay.Listeners
                             {
                                 if (stream.ContainsKey("audioFormat"))
                                 {
-                                    var audioFormat = (int)stream["audioFormat"];
+                                    var audioFormat = Convert.ToInt32(stream["audioFormat"]);
                                     session.AudioFormat = (AudioFormat)audioFormat;
 
                                     var description = GetAudioFormatDescription(audioFormat);
@@ -341,11 +341,11 @@ namespace AirPlay.Listeners
                                 }
                                 if (stream.ContainsKey("ct"))
                                 {
-                                    session.AudioCompressionType = (int)stream["ct"];
+                                    session.AudioCompressionType = Convert.ToInt32(stream["ct"]);
                                 }
                                 if (stream.ContainsKey("spf"))
                                 {
-                                    session.AudioSamplesPerFrame = (int)stream["spf"];
+                                    session.AudioSamplesPerFrame = Convert.ToInt32(stream["spf"]);
                                 }
                                 if (stream.ContainsKey("controlPort"))
                                 {
