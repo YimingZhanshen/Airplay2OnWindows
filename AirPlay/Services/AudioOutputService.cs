@@ -11,8 +11,8 @@ namespace AirPlay.Services
     /// </summary>
     public class AudioOutputService : IDisposable
     {
-        private const int COM_CLEANUP_DELAY_MS = 200;
-        private const int PREBUFFER_PACKETS = 50;
+        private const int COM_CLEANUP_DELAY_MS = 50;
+        private const int PREBUFFER_PACKETS = 10;
         private const int LOG_FREQUENCY_PACKETS = 50000;
 
         private IWavePlayer _waveOut;
@@ -24,6 +24,7 @@ namespace AirPlay.Services
         private bool _initialized = false;
         private WaveFormat _waveFormat;
         private bool _needsReinit = false;
+        private float _volume = 1.0f;
 
         public event EventHandler PlaybackStoppedUnexpectedly;
 
@@ -39,10 +40,10 @@ namespace AirPlay.Services
                 _waveFormat = new WaveFormat(44100, 16, 2);
 
                 // Create streaming provider that NAudio pulls from
-                _streamProvider = new StreamingWaveProvider(_waveFormat, maxQueueSize: 500);
+                _streamProvider = new StreamingWaveProvider(_waveFormat, maxQueueSize: 250);
 
                 // Create DirectSound device (but DON'T call Init() yet)
-                _waveOut = new DirectSoundOut(100); // 100ms latency
+                _waveOut = new DirectSoundOut(40); // 40ms latency
 
                 _waveOut.PlaybackStopped += OnPlaybackStopped;
 
@@ -118,7 +119,7 @@ namespace AirPlay.Services
             {
                 try
                 {
-                    _waveOut = new DirectSoundOut(100);
+                    _waveOut = new DirectSoundOut(40);
                     _waveOut.PlaybackStopped += OnPlaybackStopped;
                     Console.WriteLine($"Audio device recreated for new track, waiting for {PREBUFFER_PACKETS} packets before Init()...");
                 }
@@ -127,6 +128,39 @@ namespace AirPlay.Services
                     Console.WriteLine($"Failed to recreate audio device: {ex.Message}");
                     _needsReinit = true;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Set audio volume. AirPlay sends volume in dB scale:
+        /// -144.0 = mute, -30.0 to 0.0 = normal range.
+        /// Converts to linear scale (0.0 to 1.0) for NAudio.
+        /// </summary>
+        public void SetVolume(decimal airplayVolume)
+        {
+            lock (_lock)
+            {
+                if (_disposed) return;
+
+                if (airplayVolume <= -144.0m)
+                {
+                    _volume = 0.0f;
+                }
+                else
+                {
+                    // Convert dB to linear: volume = 10^(dB/20)
+                    // AirPlay range is roughly -30 to 0
+                    _volume = (float)Math.Pow(10.0, (double)airplayVolume / 20.0);
+                    _volume = Math.Max(0.0f, Math.Min(1.0f, _volume));
+                }
+
+                // Apply volume via StreamingWaveProvider (DirectSoundOut doesn't support Volume)
+                if (_streamProvider != null)
+                {
+                    _streamProvider.Volume = _volume;
+                }
+
+                Console.WriteLine($"Volume set to {_volume:F2} (AirPlay dB: {airplayVolume:F1})");
             }
         }
 
@@ -199,7 +233,7 @@ namespace AirPlay.Services
                 try
                 {
                     _streamProvider?.Clear();
-                    _waveOut = new DirectSoundOut(100);
+                    _waveOut = new DirectSoundOut(40);
                     _waveOut.PlaybackStopped += OnPlaybackStopped;
                     _initialized = false;
                     _isPlaying = false;

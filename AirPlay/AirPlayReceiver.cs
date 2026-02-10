@@ -82,7 +82,7 @@ namespace AirPlay
             // Internally 'ServiceProfile' create the SRV record
             var airTunes = new ServiceProfile($"{deviceIdInstance}@{_instance}", AirTunesType, _airTunesPort);
             airTunes.AddProperty("ch", "2");
-            airTunes.AddProperty("cn", "2,3");
+            airTunes.AddProperty("cn", "0,1,2,3");
             airTunes.AddProperty("et", "0,3,5");
             airTunes.AddProperty("md", "0,1,2");
             airTunes.AddProperty("sr", "44100");

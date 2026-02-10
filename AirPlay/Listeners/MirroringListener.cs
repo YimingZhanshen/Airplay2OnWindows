@@ -46,102 +46,110 @@ namespace AirPlay.Listeners
                 session.DecryptedAesKey = decryptedAesKey;
             }
 
+            // Reset cipher state for new connection
+            _nextDecryptCount = 0;
+            Array.Clear(_og, 0, _og.Length);
+
             InitAesCtrCipher(session.DecryptedAesKey, session.EcdhShared, session.StreamConnectionId);
 
             var headerBuffer = new byte[128];
-            var readStart = 0;
 
-            do
+            try
             {
-                MirroringHeader header;
-                if (stream.DataAvailable)
+                do
                 {
-                    var ret = await stream.ReadAsync(headerBuffer, readStart, 4 - readStart);
-                    readStart += ret;
-                    if (readStart < 4)
+                    // Read the first 4 bytes to determine packet type
+                    int readStart = 0;
+                    int ret;
+                    do
                     {
-                        continue;
-                    }
+                        ret = await stream.ReadAsync(headerBuffer, readStart, 4 - readStart, cancellationToken);
+                        if (ret <= 0)
+                        {
+                            goto exit_loop;
+                        }
+                        readStart += ret;
+                    } while (readStart < 4);
 
                     if ((headerBuffer[0] == 80 && headerBuffer[1] == 79 && headerBuffer[2] == 83 && headerBuffer[3] == 84) || (headerBuffer[0] == 71 && headerBuffer[1] == 69 && headerBuffer[2] == 84))
                     {
                         // Request is POST or GET (skip)
+                        continue;
                     }
-                    else
+
+                    // Read remaining 124 bytes of the 128-byte header
+                    do
                     {
+                        ret = await stream.ReadAsync(headerBuffer, readStart, 128 - readStart, cancellationToken);
+                        if (ret <= 0)
+                        {
+                            goto exit_loop;
+                        }
+                        readStart += ret;
+                    } while (readStart < 128);
+
+                    var header = new MirroringHeader(headerBuffer);
+
+                    // Update session dimensions from codec config (PayloadType 1)
+                    if (header.PayloadType == 1)
+                    {
+                        if (header.WidthSource > 0)
+                            session.WidthSource = header.WidthSource;
+                        if (header.HeightSource > 0)
+                            session.HeightSource = header.HeightSource;
+                    }
+
+                    if (header.PayloadSize <= 0)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        byte[] payload = new byte[header.PayloadSize];
+
+                        readStart = 0;
                         do
                         {
-                            ret = await stream.ReadAsync(headerBuffer, readStart, 128 - readStart);
+                            ret = await stream.ReadAsync(payload, readStart, header.PayloadSize - readStart, cancellationToken);
                             if (ret <= 0)
                             {
-                                break;
+                                goto exit_loop;
                             }
                             readStart += ret;
-                        } while (readStart < 128);
+                        } while (readStart < header.PayloadSize);
 
-                        header = new MirroringHeader(headerBuffer);
-
-                        if (!session.Pts.HasValue)
+                        if (header.PayloadType == 0)
                         {
-                            session.Pts = header.PayloadPts;
+                            DecryptVideoData(payload, out byte[] output);
+                            // Use the PTS from this specific frame's header
+                            long framePts = header.PayloadPts;
+                            int width = session.WidthSource ?? 1920;
+                            int height = session.HeightSource ?? 1080;
+                            ProcessVideo(output, session.SpsPps, framePts, width, height);
                         }
-                        if (!session.WidthSource.HasValue)
+                        else if (header.PayloadType == 1)
                         {
-                            session.WidthSource = header.WidthSource;
+                            ProcessSpsPps(payload, out byte[] spsPps);
+                            session.SpsPps = spsPps;
                         }
-                        if (!session.HeightSource.HasValue)
-                        {
-                            session.HeightSource = header.HeightSource;
-                        }
-
-                        if (header != null && stream.DataAvailable)
-                        {
-                            try
-                            {
-                                byte[] payload = (byte[])Array.CreateInstance(typeof(byte), header.PayloadSize);
-
-                                readStart = 0;
-                                do
-                                {
-                                    ret = await stream.ReadAsync(payload, readStart, header.PayloadSize - readStart);
-                                    readStart += ret;
-                                } while (readStart < header.PayloadSize);
-
-                                if (header.PayloadType == 0)
-                                {
-                                    DecryptVideoData(payload, out byte[] output);
-                                    ProcessVideo(output, session.SpsPps, session.Pts.Value, session.WidthSource.Value, session.HeightSource.Value);
-                                }
-                                else if (header.PayloadType == 1)
-                                {
-                                    ProcessSpsPps(payload, out byte[] spsPps);
-                                    session.SpsPps = spsPps;
-                                }
-                                else
-                                {
-                                    // SKIP
-                                }
-                            }
-                            catch (Exception e)
-                            {
-                                Console.WriteLine(e);
-                            }
-                        }
-
-                        await Task.Delay(10);
-
-                        // Save current session
-                        await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
                     }
-                }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine($"Mirroring error: {e}");
+                    }
 
-                // Fix issue #24
-                await Task.Delay(1);
-                readStart = 0;
-                header = null;
-                headerBuffer = new byte[128];
-            } while (client.Connected && stream.CanRead && !cancellationToken.IsCancellationRequested);
+                    // Save current session periodically
+                    await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
 
+                } while (client.Connected && stream.CanRead && !cancellationToken.IsCancellationRequested);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown - cancellation was requested
+            }
+
+            exit_loop:
             Console.WriteLine($"Closing mirroring connection..");
         }
 
@@ -157,7 +165,6 @@ namespace AirPlay.Listeners
 
             int encryptlen = ((videoData.Length - _nextDecryptCount) / 16) * 16;
             _aesCtrDecrypt.ProcessBytes(videoData, _nextDecryptCount, encryptlen, videoData, _nextDecryptCount);
-            Array.Copy(videoData, _nextDecryptCount, videoData, _nextDecryptCount, encryptlen);
 
             int restlen = (videoData.Length - _nextDecryptCount) % 16;
             int reststart = videoData.Length - restlen;
@@ -171,11 +178,7 @@ namespace AirPlay.Listeners
                 _nextDecryptCount = 16 - restlen;
             }
 
-            output = new byte[videoData.Length];
-            Array.Copy(videoData, 0, output, 0, videoData.Length);
-
-            // Release video data
-            videoData = null;
+            output = videoData;
         }
 
         private void InitAesCtrCipher(byte[] aesKey, byte[] ecdhShared, string streamConnectionId)
@@ -201,53 +204,57 @@ namespace AirPlay.Listeners
 
         private void ProcessVideo(byte[] payload, byte[] spsPps, long pts, int widthSource, int heightSource)
         {
-            int nalu_size = 0;
-            while (nalu_size < payload.Length)
+            if (payload == null || payload.Length < 5)
+                return;
+
+            // Convert AVCC format (4-byte NALU length prefix) to Annex B format (00 00 00 01 start codes)
+            int offset = 0;
+            while (offset + 4 <= payload.Length)
             {
-                int nc_len = (payload[nalu_size + 3] & 0xFF) | ((payload[nalu_size + 2] & 0xFF) << 8) | ((payload[nalu_size + 1] & 0xFF) << 16) | ((payload[nalu_size] & 0xFF) << 24);
-                if (nc_len > 0)
+                int nc_len = ((payload[offset] & 0xFF) << 24) | ((payload[offset + 1] & 0xFF) << 16) |
+                             ((payload[offset + 2] & 0xFF) << 8) | (payload[offset + 3] & 0xFF);
+
+                if (nc_len <= 0 || offset + 4 + nc_len > payload.Length)
                 {
-                    payload[nalu_size] = 0;
-                    payload[nalu_size + 1] = 0;
-                    payload[nalu_size + 2] = 0;
-                    payload[nalu_size + 3] = 1;
-                    nalu_size += nc_len + 4;
+                    break;
                 }
-                if (payload.Length - nc_len > 4)
-                {
-                    return;
-                }
+
+                // Replace NALU length with Annex B start code
+                payload[offset] = 0;
+                payload[offset + 1] = 0;
+                payload[offset + 2] = 0;
+                payload[offset + 3] = 1;
+
+                offset += 4 + nc_len;
             }
 
-            if (spsPps.Length != 0)
+            if (spsPps == null || spsPps.Length == 0)
+                return;
+
+            var h264Data = new H264Data();
+            h264Data.FrameType = payload[4] & 0x1f;
+
+            if (h264Data.FrameType == 5)
             {
-                var h264Data = new H264Data();
-                h264Data.FrameType = payload[4] & 0x1f;
-                if (h264Data.FrameType == 5)
-                {
-                    var payloadOut = (byte[])Array.CreateInstance(typeof(byte), payload.Length + spsPps.Length);
+                // IDR frame - prepend SPS/PPS
+                var payloadOut = new byte[payload.Length + spsPps.Length];
+                Array.Copy(spsPps, 0, payloadOut, 0, spsPps.Length);
+                Array.Copy(payload, 0, payloadOut, spsPps.Length, payload.Length);
 
-                    Array.Copy(spsPps, 0, payloadOut, 0, spsPps.Length);
-                    Array.Copy(payload, 0, payloadOut, spsPps.Length, payload.Length);
-
-                    h264Data.Data = payloadOut;
-                    h264Data.Length = payload.Length + spsPps.Length;
-
-                    // Release payload
-                    payload = null;
-                }
-                else
-                {
-                    h264Data.Data = payload;
-                    h264Data.Length = payload.Length;
-                }
-
-                h264Data.Pts = pts;
-                h264Data.Width = widthSource;
-                h264Data.Height = heightSource;
-
-                _receiver.OnData(h264Data);
+                h264Data.Data = payloadOut;
+                h264Data.Length = payloadOut.Length;
             }
+            else
+            {
+                h264Data.Data = payload;
+                h264Data.Length = payload.Length;
+            }
+
+            h264Data.Pts = pts;
+            h264Data.Width = widthSource;
+            h264Data.Height = heightSource;
+
+            _receiver.OnData(h264Data);
         }
 
         private void ProcessSpsPps(byte[] payload, out byte[] spsPps)
@@ -266,7 +273,7 @@ namespace AirPlay.Listeners
             Array.Copy(payload, 8, sequence, 0, h264.LengthOfSps);
             h264.SequenceParameterSet = sequence;
             h264.NumberOfPps = payload[h264.LengthOfSps + 8];
-            h264.LengthOfPps = (short)(((payload[h264.LengthOfSps + 9] & 2040) + payload[h264.LengthOfSps + 10]) & 255);
+            h264.LengthOfPps = (short)(((payload[h264.LengthOfSps + 9] & 0xFF) << 8) + (payload[h264.LengthOfSps + 10] & 0xFF));
 
             var picture = new byte[h264.LengthOfPps];
             Array.Copy(payload, h264.LengthOfSps + 11, picture, 0, h264.LengthOfPps);

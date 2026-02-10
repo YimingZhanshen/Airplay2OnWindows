@@ -333,11 +333,19 @@ namespace AirPlay.Listeners
                             {
                                 if (stream.ContainsKey("audioFormat"))
                                 {
-                                    var audioFormat = (int)stream["audioFormat"];
+                                    var audioFormat = Convert.ToInt32(stream["audioFormat"]);
                                     session.AudioFormat = (AudioFormat)audioFormat;
 
                                     var description = GetAudioFormatDescription(audioFormat);
                                     Console.WriteLine($"Audio type: {description}");
+                                }
+                                if (stream.ContainsKey("ct"))
+                                {
+                                    session.AudioCompressionType = Convert.ToInt32(stream["ct"]);
+                                }
+                                if (stream.ContainsKey("spf"))
+                                {
+                                    session.AudioSamplesPerFrame = Convert.ToInt32(stream["spf"]);
                                 }
                                 if (stream.ContainsKey("controlPort"))
                                 {
@@ -440,8 +448,17 @@ namespace AirPlay.Listeners
 
                             session.StreamingListener = streaming;
                         }
-                        if (session.FairPlayReady && session.AudioSessionReady && session.AudioControlListener == null)
+                        if (session.FairPlayReady && session.AudioSessionReady)
                         {
+                            // Stop existing audio listener before creating a new one
+                            // (ports 7002/7003 must be released first)
+                            if (session.AudioControlListener != null)
+                            {
+                                try { await session.AudioControlListener.StopAsync(); }
+                                catch (Exception ex) { Console.WriteLine($"Error stopping old audio listener: {ex.Message}"); }
+                                session.AudioControlListener = null;
+                            }
+
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
                             var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -565,7 +582,12 @@ namespace AirPlay.Listeners
                             if (session.MirroringListener != null)
                             {
                                 await session.MirroringListener.StopAsync();
+                                session.MirroringListener = null;
                             }
+                            // Reset video state for clean reconnect
+                            session.SpsPps = null;
+                            session.StreamConnectionId = null;
+                            session.MirroringSession = null;
                         }
                         // If audio session
                         if (type == 96)
@@ -574,7 +596,9 @@ namespace AirPlay.Listeners
                             if (session.AudioControlListener != null)
                             {
                                 await session.AudioControlListener.StopAsync();
+                                session.AudioControlListener = null;
                             }
+                            session.AudioFormat = AudioFormat.Unknown;
                         }
                     }
                 }
@@ -593,6 +617,9 @@ namespace AirPlay.Listeners
 
             switch (format)
             {
+                case 0x0:
+                    formatDescription = "96 L16/44100/2 (PCM)";
+                    break;
                 case 0x40000:
                     formatDescription = "96 AppleLossless, 96 352 0 16 40 10 14 2 255 0 0 44100";
                     break;

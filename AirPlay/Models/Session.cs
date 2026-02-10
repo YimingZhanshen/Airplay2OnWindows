@@ -27,6 +27,8 @@ namespace AirPlay.Models
         public byte[] AesIv { get; set; } = null;
         public string StreamConnectionId { get; set; } = null;
         public AudioFormat AudioFormat { get; set; } = AudioFormat.Unknown;
+        public int AudioCompressionType { get; set; } = -1;  // ct: 0=PCM, 1=ALAC, 2=AAC, 8=AAC-ELD
+        public int AudioSamplesPerFrame { get; set; } = 0;   // spf: samples per frame (e.g. 352, 480)
 
         public MirroringListener MirroringListener = null;
         public StreamingListener StreamingListener = null;

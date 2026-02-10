@@ -62,6 +62,9 @@ namespace AirPlay.Listeners
                 session.DecryptedAesKey = decryptedAesKey;
             }
 
+            // Initialize decoder (needed for type 0x56 audio packets during mirroring)
+            InitializeDecoder(session);
+
             await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
 
             var packet = new byte[RAOP_PACKET_LENGTH];
@@ -87,9 +90,22 @@ namespace AirPlay.Listeners
                         var data = reader.ReadBytes(cret - 4);
 
                         var ret = RaopBufferQueue(_raopBuffer, data, (ushort)data.Length, session);
-                        if (ret >= 0)
+
+                        // Dequeue and play audio received on control socket (used during screen mirroring)
+                        byte[] audiobuf;
+                        int audiobuflen = 0;
+                        uint timestamp = 0;
+                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, true)) != null)
                         {
-                            // ERROR
+                            if (audiobuf.Length == 0 || audiobuflen <= 0)
+                                continue;
+
+                            var pcmData = new PcmData();
+                            pcmData.Length = audiobuflen;
+                            pcmData.Data = audiobuf;
+                            pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
+
+                            _receiver.OnPCMData(pcmData);
                         }
                     }
                     else if (type_c == 0x54)
@@ -103,7 +119,9 @@ namespace AirPlay.Listeners
                             */
 
                         mem.Position = 8;
-                        ulong ntp_time = (((ulong)reader.ReadInt32()) * 1000000UL) + ((((ulong)reader.ReadInt32()) * 1000000UL) / Int32.MaxValue);
+                        uint ntp_seconds = (uint)reader.ReadInt32();
+                        uint ntp_fraction = (uint)reader.ReadInt32();
+                        ulong ntp_time = ((ulong)ntp_seconds * 1000000UL) + (((ulong)ntp_fraction * 1000000UL) >> 32);
                         uint rtp_timestamp = (uint)((packet[4] << 24) | (packet[5] << 16) | (packet[6] << 8) | packet[7]);
                         uint next_timestamp = (uint)((packet[16] << 24) | (packet[17] << 16) | (packet[18] << 8) | packet[19]);
 
@@ -138,7 +156,7 @@ namespace AirPlay.Listeners
             }
 
             // Initialize decoder
-            InitializeDecoder(session.AudioFormat);
+            InitializeDecoder(session);
 
             await SessionManager.Current.CreateOrUpdateSessionAsync(_sessionId, session);
 
@@ -169,14 +187,9 @@ namespace AirPlay.Listeners
 
                     //if(_raopBuffer.LastSeqNum - _raopBuffer.FirstSeqNum > (RAOP_BUFFER_LENGTH / 8))
                     //{
-                        // Dequeue frames from buffer, limit to prevent flooding the output queue
-                        int dequeueCount = 0;
-                        const int maxDequeuePerPacket = 10;
-                        while (dequeueCount < maxDequeuePerPacket &&
-                               (audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
+                        // Dequeue all available frames from buffer
+                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
                         {
-                            dequeueCount++;
-
                             if (audiobuf.Length == 0 || audiobuflen <= 0)
                                 continue;
 
@@ -197,7 +210,7 @@ namespace AirPlay.Listeners
                     }
                 }
 
-                packet = new byte[RAOP_PACKET_LENGTH];
+                Array.Clear(packet, 0, packet.Length);
             } while (!cancellationToken.IsCancellationRequested);
 
             Console.WriteLine("Closing audio data socket..");
@@ -223,7 +236,8 @@ namespace AirPlay.Listeners
 
         private RaopBuffer RaopBufferInit()
         {
-            var audio_buffer_size = 480 * 4;
+            // Use max possible decoded PCM size: 1024 samples * 2 channels * 2 bytes (AAC-main)
+            var audio_buffer_size = 1024 * 4;
             var raop_buffer = new RaopBuffer();
 
             raop_buffer.BufferSize = audio_buffer_size * RAOP_BUFFER_LENGTH;
@@ -233,7 +247,8 @@ namespace AirPlay.Listeners
 		        var entry = raop_buffer.Entries[i];
                 entry.AudioBufferSize = audio_buffer_size;
 		        entry.AudioBufferLen = 0;
-		        entry.AudioBuffer = (byte[]) raop_buffer.Buffer.Skip(i).Take(audio_buffer_size).ToArray();
+		        entry.AudioBuffer = new byte[audio_buffer_size];
+		        Array.Copy(raop_buffer.Buffer, i * audio_buffer_size, entry.AudioBuffer, 0, audio_buffer_size);
 
                 raop_buffer.Entries[i] = entry;
             }
@@ -402,7 +417,9 @@ namespace AirPlay.Listeners
             raop_buffer.Entries[raop_buffer.FirstSeqNum % RAOP_BUFFER_LENGTH] = entry;
             raop_buffer.FirstSeqNum += 1;
 
-            return entry.AudioBuffer.Take(length).ToArray();
+            var result = new byte[length];
+            Array.Copy(entry.AudioBuffer, 0, result, 0, length);
+            return result;
         }
 
         private void RaopBufferFlush(RaopBuffer raop_buffer, int next_seq)
@@ -475,16 +492,19 @@ namespace AirPlay.Listeners
             return 0;
         }
 
-        private void InitializeDecoder (AudioFormat audioFormat)
+        private void InitializeDecoder (Session session)
         {
             if (_decoder != null) return;
+
+            var audioFormat = session.AudioFormat;
+            var spf = session.AudioSamplesPerFrame;
 
             if (audioFormat == AudioFormat.ALAC)
             {
                 // RTP info: 96 AppleLossless, 96 352 0 16 40 10 14 2 255 0 0 44100
                 // (ALAC -> PCM)
 
-                var frameLength = 352;
+                var frameLength = spf > 0 ? spf : 352;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
@@ -497,7 +517,7 @@ namespace AirPlay.Listeners
                 // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-main; constantDuration=1024
                 // (AAC-MAIN -> PCM)
 
-                var frameLength = 1024;
+                var frameLength = spf > 0 ? spf : 1024;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
@@ -508,21 +528,61 @@ namespace AirPlay.Listeners
             else if(audioFormat == AudioFormat.AAC_ELD)
             {
                 // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
-                // (AAC-ELD -> PCM)
+                // (AAC-ELD -> PCM) using FFmpeg subprocess decoder
 
-                var frameLength = 480;
+                var frameLength = spf > 0 ? spf : 480;
                 var numChannels = 2;
                 var bitDepth = 16;
                 var sampleRate = 44100;
 
-                _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_ER_AAC_ELD, 1);
-                _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                try
+                {
+                    var aacEldDecoder = new Decoders.Implementations.FFmpegAacEldDecoder();
+                    var ret = aacEldDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                    if (ret == 0)
+                    {
+                        _decoder = aacEldDecoder;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"FFmpeg AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
+                        aacEldDecoder.Dispose();
+                        _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                        _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"FFmpeg AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
+                    _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                    _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                }
+            }
+            else if (audioFormat == AudioFormat.PCM)
+            {
+                // Raw PCM audio - no decoding needed
+                _decoder = new PCMDecoder();
             }
             else
             {
-                // (PCM -> PCM)
-                // Not used
-                _decoder = new PCMDecoder();
+                // Determine format from compression type if audioFormat is unknown
+                if (session.AudioCompressionType == 1)
+                {
+                    // ct=1 = ALAC
+                    var frameLength = spf > 0 ? spf : 352;
+                    _decoder = new ALACDecoder();
+                    _decoder.Config(44100, 2, 16, frameLength);
+                }
+                else if (session.AudioCompressionType == 0)
+                {
+                    // ct=0 = PCM
+                    _decoder = new PCMDecoder();
+                }
+                else
+                {
+                    // Default fallback
+                    _decoder = new PCMDecoder();
+                }
             }
         }
     }
