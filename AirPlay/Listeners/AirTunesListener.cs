@@ -473,7 +473,8 @@ namespace AirPlay.Listeners
 
                             Console.WriteLine($"[DEBUG-SETUP] Creating new AudioListener: format={session.AudioFormat}, ct={session.AudioCompressionType}, spf={session.AudioSamplesPerFrame}, mirroring={session.MirroringSession}");
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
-                            var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig);
+                            bool isMirroring = session.MirroringSession.HasValue && session.MirroringSession.Value;
+                            var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig, isMirroring);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
                             Console.WriteLine("[DEBUG-SETUP] AudioListener started successfully");
 

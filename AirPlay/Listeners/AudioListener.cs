@@ -36,11 +36,14 @@ namespace AirPlay.Listeners
 
         private readonly DumpConfig _dConfig;
 
-        public AudioListener(IRtspReceiver receiver, string sessionId, ushort cport, ushort dport, DumpConfig dConfig) : base(cport, dport)
+        private bool _isMirroring = false;
+
+        public AudioListener(IRtspReceiver receiver, string sessionId, ushort cport, ushort dport, DumpConfig dConfig, bool isMirroring = false) : base(cport, dport)
         {
             _receiver = receiver ?? throw new ArgumentNullException(nameof(receiver));
             _sessionId = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
             _dConfig = dConfig ?? throw new ArgumentNullException(nameof(dConfig));
+            _isMirroring = isMirroring;
 
             _raopBuffer = RaopBufferInit();
         }
@@ -281,7 +284,8 @@ namespace AirPlay.Listeners
                     {
                         InitAesCbcCipher(aesCbcDecrypt, session.DecryptedAesKey, session.EcdhShared, session.AesIv);
 
-                        bool no_resend = false;
+                        // During screen mirroring, skip resend waiting (real-time audio can't wait)
+                        bool no_resend = _isMirroring;
                         int buf_ret;
                         byte[] audiobuf;
                         int audiobuflen = 0;
@@ -327,7 +331,7 @@ namespace AirPlay.Listeners
                             dPcmDelivered++;
                         }
 
-                        /* Handle possible resend requests */
+                        /* Handle possible resend requests (not needed during mirroring) */
                         if (!no_resend)
                         {
                             RaopBufferHandleResends(_raopBuffer, _cSocket, _controlSequenceNumber);
@@ -368,7 +372,11 @@ namespace AirPlay.Listeners
 
         public Task FlushAsync(int nextSequence)
         {
-            RaopBufferFlush(_raopBuffer, nextSequence);
+            Console.WriteLine($"[DEBUG-FLUSH] FlushAsync called: nextSequence={nextSequence}, isMirroring={_isMirroring}");
+            lock (_bufferLock)
+            {
+                RaopBufferFlush(_raopBuffer, nextSequence);
+            }
             _receiver.OnAudioFlush();
             return Task.CompletedTask;
         }
@@ -548,11 +556,11 @@ namespace AirPlay.Listeners
 
         public byte[] RaopBufferDequeue(RaopBuffer raop_buffer, ref int length, ref uint pts, bool noResend)
         {
-            short buflen;
+            int buflen;
             RaopBufferEntry entry;
 
-            /* Calculate number of entries in the current buffer */
-            buflen = (short)(raop_buffer.LastSeqNum - raop_buffer.FirstSeqNum + 1);
+            /* Calculate number of entries in the current buffer (use ushort arithmetic to handle wraparound) */
+            buflen = (ushort)(raop_buffer.LastSeqNum - raop_buffer.FirstSeqNum + 1);
 
             /* Cannot dequeue from empty buffer */
             if (raop_buffer.IsEmpty || buflen <= 0)

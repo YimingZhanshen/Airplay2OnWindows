@@ -31,6 +31,41 @@ jobs:
     - name: Publish
       run: dotnet publish AirPlay/AirPlay.csproj --configuration Release --runtime win-x64 --self-contained true --output ./publish/win-x64
 
+    - name: Download FFmpeg
+      shell: pwsh
+      run: |
+        $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        Invoke-WebRequest -Uri $ffmpegUrl -OutFile ffmpeg.zip
+        Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-tmp
+        # Copy ffmpeg.exe and ffplay.exe to publish directory
+        $binDir = Get-ChildItem -Path ffmpeg-tmp -Recurse -Directory -Filter "bin" | Select-Object -First 1
+        Copy-Item "$($binDir.FullName)\ffmpeg.exe" -Destination ./publish/win-x64/
+        Copy-Item "$($binDir.FullName)\ffplay.exe" -Destination ./publish/win-x64/
+
+    - name: Download libfdk-aac
+      shell: pwsh
+      run: |
+        # Download pre-built FDK-AAC for Windows x64
+        $fdkUrl = "https://github.com/nicholastay/libfdk-aac-build/releases/download/v2.0.3/libfdk-aac-v2.0.3-win-x64.zip"
+        Invoke-WebRequest -Uri $fdkUrl -OutFile libfdk-aac.zip
+        Expand-Archive -Path libfdk-aac.zip -DestinationPath libfdk-aac-tmp
+        # Find and copy libfdk-aac-2.dll to publish directory
+        $dllFile = Get-ChildItem -Path libfdk-aac-tmp -Recurse -Filter "libfdk-aac-2.dll" | Select-Object -First 1
+        if ($dllFile) {
+          Copy-Item $dllFile.FullName -Destination ./publish/win-x64/
+          Write-Host "Copied libfdk-aac-2.dll to publish directory"
+        } else {
+          # Try alternative name
+          $dllFile = Get-ChildItem -Path libfdk-aac-tmp -Recurse -Filter "*.dll" | Select-Object -First 1
+          if ($dllFile) {
+            Copy-Item $dllFile.FullName -Destination ./publish/win-x64/libfdk-aac-2.dll
+            Write-Host "Copied $($dllFile.Name) as libfdk-aac-2.dll to publish directory"
+          } else {
+            Write-Host "WARNING: Could not find libfdk-aac DLL in downloaded archive"
+            Get-ChildItem -Path libfdk-aac-tmp -Recurse | ForEach-Object { Write-Host $_.FullName }
+          }
+        }
+
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
