@@ -23,11 +23,11 @@ namespace AirPlay.Listeners
 
         private readonly IRtspReceiver _receiver;
         private readonly string _sessionId;
-        private IBufferedCipher _aesCbcDecrypt;
         private readonly OmgHax _omgHax = new OmgHax();
 
         private IDecoder _decoder;
         private readonly object _decoderLock = new object();
+        private readonly object _bufferLock = new object();
         private ulong _sync_time;
         private ulong _sync_timestamp;
         private ushort _controlSequenceNumber = 0;
@@ -43,7 +43,6 @@ namespace AirPlay.Listeners
             _dConfig = dConfig ?? throw new ArgumentNullException(nameof(dConfig));
 
             _raopBuffer = RaopBufferInit();
-            _aesCbcDecrypt = CipherUtilities.GetCipher("AES/CBC/NoPadding");
         }
 
         public override async Task OnRawCSocketAsync(Socket cSocket, CancellationToken cancellationToken)
@@ -51,6 +50,9 @@ namespace AirPlay.Listeners
             Console.WriteLine("Initializing recevie audio control from socket..");
 
             _cSocket = cSocket;
+
+            // Each handler gets its own cipher instance (cipher is stateful, not thread-safe)
+            var aesCbcDecrypt = CipherUtilities.GetCipher("AES/CBC/NoPadding");
 
             // Get session by active-remove header value
             var session = await SessionManager.Current.GetSessionAsync(_sessionId);
@@ -72,70 +74,90 @@ namespace AirPlay.Listeners
 
             do
             {
-                var cret = cSocket.Receive(packet, 0, RAOP_PACKET_LENGTH, SocketFlags.None, out SocketError error);
-                if(error != SocketError.Success)
+                try
                 {
-                    continue;
-                }
-
-                var mem = new MemoryStream(packet);
-                using (var reader = new BinaryReader(mem))
-                {
-                    mem.Position = 1;
-                    int type_c = reader.ReadByte() & ~0x80;
-                    if (type_c == 0x56)
+                    var cret = cSocket.Receive(packet, 0, RAOP_PACKET_LENGTH, SocketFlags.None, out SocketError error);
+                    if(error != SocketError.Success)
                     {
-                        InitAesCbcCipher(session.DecryptedAesKey, session.EcdhShared, session.AesIv);
+                        continue;
+                    }
 
-                        mem.Position = 4;
-                        var data = reader.ReadBytes(cret - 4);
-
-                        var ret = RaopBufferQueue(_raopBuffer, data, (ushort)data.Length, session);
-
-                        // Dequeue and play audio received on control socket (used during screen mirroring)
-                        byte[] audiobuf;
-                        int audiobuflen = 0;
-                        uint timestamp = 0;
-                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, true)) != null)
+                    var mem = new MemoryStream(packet);
+                    using (var reader = new BinaryReader(mem))
+                    {
+                        mem.Position = 1;
+                        int type_c = reader.ReadByte() & ~0x80;
+                        if (type_c == 0x56)
                         {
-                            if (audiobuf.Length == 0 || audiobuflen <= 0)
-                                continue;
+                            InitAesCbcCipher(aesCbcDecrypt, session.DecryptedAesKey, session.EcdhShared, session.AesIv);
 
-                            var pcmData = new PcmData();
-                            pcmData.Length = audiobuflen;
-                            pcmData.Data = audiobuf;
-                            pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
+                            mem.Position = 4;
+                            var data = reader.ReadBytes(cret - 4);
 
-                            _receiver.OnPCMData(pcmData);
+                            int ret;
+                            lock (_bufferLock)
+                            {
+                                ret = RaopBufferQueue(_raopBuffer, data, (ushort)data.Length, session, aesCbcDecrypt);
+                            }
+
+                            // Dequeue and play audio received on control socket (used during screen mirroring)
+                            byte[] audiobuf;
+                            int audiobuflen = 0;
+                            uint timestamp = 0;
+                            lock (_bufferLock)
+                            {
+                                while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, true)) != null)
+                                {
+                                    if (audiobuf.Length == 0 || audiobuflen <= 0)
+                                        continue;
+
+                                    var pcmData = new PcmData();
+                                    pcmData.Length = audiobuflen;
+                                    pcmData.Data = audiobuf;
+                                    pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
+
+                                    _receiver.OnPCMData(pcmData);
+                                }
+                            }
+                        }
+                        else if (type_c == 0x54)
+                        {
+                            /**
+                                * packetlen = 20
+                                * bytes	description
+                                8	RTP header without SSRC
+                                8	current NTP time
+                                4	RTP timestamp for the next audio packet
+                                */
+
+                            mem.Position = 8;
+                            uint ntp_seconds = (uint)reader.ReadInt32();
+                            uint ntp_fraction = (uint)reader.ReadInt32();
+                            ulong ntp_time = ((ulong)ntp_seconds * 1000000UL) + (((ulong)ntp_fraction * 1000000UL) >> 32);
+                            uint rtp_timestamp = (uint)((packet[4] << 24) | (packet[5] << 16) | (packet[6] << 8) | packet[7]);
+                            uint next_timestamp = (uint)((packet[16] << 24) | (packet[17] << 16) | (packet[18] << 8) | packet[19]);
+
+                            _sync_time = ntp_time - OFFSET_1900_TO_1970 * 1000000UL;
+                            _sync_timestamp = rtp_timestamp;
                         }
                     }
-                    else if (type_c == 0x54)
-                    {
-                        /**
-                            * packetlen = 20
-                            * bytes	description
-                            8	RTP header without SSRC
-                            8	current NTP time
-                            4	RTP timestamp for the next audio packet
-                            */
 
-                        mem.Position = 8;
-                        uint ntp_seconds = (uint)reader.ReadInt32();
-                        uint ntp_fraction = (uint)reader.ReadInt32();
-                        ulong ntp_time = ((ulong)ntp_seconds * 1000000UL) + (((ulong)ntp_fraction * 1000000UL) >> 32);
-                        uint rtp_timestamp = (uint)((packet[4] << 24) | (packet[5] << 16) | (packet[6] << 8) | packet[7]);
-                        uint next_timestamp = (uint)((packet[16] << 24) | (packet[17] << 16) | (packet[18] << 8) | packet[19]);
-
-                        _sync_time = ntp_time - OFFSET_1900_TO_1970 * 1000000UL;
-                        _sync_timestamp = rtp_timestamp;
-                    }
-                    else
-                    {
-                        Console.WriteLine("Unknown packet");
-                    }
+                    Array.Fill<byte>(packet, 0);
                 }
-
-                Array.Fill<byte>(packet, 0);
+                catch (ObjectDisposedException)
+                {
+                    // Socket was closed (StopAsync called)
+                    break;
+                }
+                catch (SocketException)
+                {
+                    // Socket error (e.g., ICMP port unreachable on Windows)
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Audio control socket error: {ex.Message}");
+                }
             } while (!cancellationToken.IsCancellationRequested);
 
             Console.WriteLine("Closing audio control socket..");
@@ -144,6 +166,9 @@ namespace AirPlay.Listeners
         public override async Task OnRawDSocketAsync(Socket dSocket, CancellationToken cancellationToken)
         {
             Console.WriteLine("Initializing recevie audio data from socket..");
+
+            // Each handler gets its own cipher instance (cipher is stateful, not thread-safe)
+            var aesCbcDecrypt = CipherUtilities.GetCipher("AES/CBC/NoPadding");
 
             // Get current session
             var session = await SessionManager.Current.GetSessionAsync(_sessionId);
@@ -165,53 +190,73 @@ namespace AirPlay.Listeners
 
             do
             {
-                var dret = dSocket.Receive(packet, 0, RAOP_PACKET_LENGTH, SocketFlags.None, out SocketError error);
-                if (error != SocketError.Success)
+                try
                 {
-                    continue;
-                }
-
-                // RTP payload type
-                int type_d = packet[1] & ~0x80;
-
-                if (packet.Length >= 12)
-                {
-                    InitAesCbcCipher(session.DecryptedAesKey, session.EcdhShared, session.AesIv);
-
-                    bool no_resend = false;
-                    int buf_ret;
-                    byte[] audiobuf;
-                    int audiobuflen = 0;
-                    uint timestamp = 0;
-
-                    buf_ret = RaopBufferQueue(_raopBuffer, packet, (ushort)dret, session);
-
-                    //if(_raopBuffer.LastSeqNum - _raopBuffer.FirstSeqNum > (RAOP_BUFFER_LENGTH / 8))
-                    //{
-                        // Dequeue all available frames from buffer
-                        while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
-                        {
-                            if (audiobuf.Length == 0 || audiobuflen <= 0)
-                                continue;
-
-                            var pcmData = new PcmData();
-                            pcmData.Length = audiobuflen;
-                            pcmData.Data = audiobuf;
-
-                            pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
-
-                            _receiver.OnPCMData(pcmData);
-                        }
-                    //}
-
-                    /* Handle possible resend requests */
-                    if (!no_resend)
+                    var dret = dSocket.Receive(packet, 0, RAOP_PACKET_LENGTH, SocketFlags.None, out SocketError error);
+                    if (error != SocketError.Success)
                     {
-                        RaopBufferHandleResends(_raopBuffer, _cSocket, _controlSequenceNumber);
+                        continue;
                     }
-                }
 
-                Array.Clear(packet, 0, packet.Length);
+                    // RTP payload type
+                    int type_d = packet[1] & ~0x80;
+
+                    if (packet.Length >= 12)
+                    {
+                        InitAesCbcCipher(aesCbcDecrypt, session.DecryptedAesKey, session.EcdhShared, session.AesIv);
+
+                        bool no_resend = false;
+                        int buf_ret;
+                        byte[] audiobuf;
+                        int audiobuflen = 0;
+                        uint timestamp = 0;
+
+                        lock (_bufferLock)
+                        {
+                            buf_ret = RaopBufferQueue(_raopBuffer, packet, (ushort)dret, session, aesCbcDecrypt);
+                        }
+
+                        // Dequeue all available frames from buffer
+                        lock (_bufferLock)
+                        {
+                            while ((audiobuf = RaopBufferDequeue(_raopBuffer, ref audiobuflen, ref timestamp, no_resend)) != null)
+                            {
+                                if (audiobuf.Length == 0 || audiobuflen <= 0)
+                                    continue;
+
+                                var pcmData = new PcmData();
+                                pcmData.Length = audiobuflen;
+                                pcmData.Data = audiobuf;
+
+                                pcmData.Pts = (ulong)(timestamp - _sync_timestamp) * 1000000UL / 44100 + _sync_time;
+
+                                _receiver.OnPCMData(pcmData);
+                            }
+                        }
+
+                        /* Handle possible resend requests */
+                        if (!no_resend)
+                        {
+                            RaopBufferHandleResends(_raopBuffer, _cSocket, _controlSequenceNumber);
+                        }
+                    }
+
+                    Array.Clear(packet, 0, packet.Length);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Socket was closed (StopAsync called)
+                    break;
+                }
+                catch (SocketException)
+                {
+                    // Socket error (e.g., ICMP port unreachable on Windows)
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Audio data socket error: {ex.Message}");
+                }
             } while (!cancellationToken.IsCancellationRequested);
 
             Console.WriteLine("Closing audio data socket..");
@@ -224,7 +269,7 @@ namespace AirPlay.Listeners
             return Task.CompletedTask;
         }
 
-        private void InitAesCbcCipher(byte[] aesKey, byte[] ecdhShared, byte[] aesIv)
+        private void InitAesCbcCipher(IBufferedCipher aesCbcDecrypt, byte[] aesKey, byte[] ecdhShared, byte[] aesIv)
         {
             byte[] hash = Utilities.Hash(aesKey, ecdhShared);
             byte[] eaesKey = Utilities.CopyOfRange(hash, 0, 16);
@@ -232,7 +277,7 @@ namespace AirPlay.Listeners
             var keyParameter = ParameterUtilities.CreateKeyParameter("AES", eaesKey);
             var cipherParameters = new ParametersWithIV(keyParameter, aesIv, 0, aesIv.Length);
 
-            _aesCbcDecrypt.Init(false, cipherParameters);
+            aesCbcDecrypt.Init(false, cipherParameters);
         }
 
         private RaopBuffer RaopBufferInit()
@@ -259,7 +304,7 @@ namespace AirPlay.Listeners
 	        return raop_buffer;
         }
 
-        public int RaopBufferQueue(RaopBuffer raop_buffer, byte[] data, ushort datalen, Session session)
+        public int RaopBufferQueue(RaopBuffer raop_buffer, byte[] data, ushort datalen, Session session, IBufferedCipher aesCbcDecrypt)
         {
             int encryptedlen;
             RaopBufferEntry entry;
@@ -310,7 +355,7 @@ namespace AirPlay.Listeners
 
             if (encryptedlen > 0)
             {
-                _aesCbcDecrypt.ProcessBytes(data, 12, encryptedlen, data, 12);
+                aesCbcDecrypt.ProcessBytes(data, 12, encryptedlen, data, 12);
                 Array.Copy(data, 12, raw, 0, encryptedlen);
             }
 
