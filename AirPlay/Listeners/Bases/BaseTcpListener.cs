@@ -42,6 +42,7 @@ namespace AirPlay.Listeners
         public override Task StopAsync()
         {
             _cancellationTokenSource.Cancel();
+            try { _listener.Stop(); } catch { }
             return Task.CompletedTask;
         }
 
@@ -59,17 +60,23 @@ namespace AirPlay.Listeners
         {
             _listener.Start();
 
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                var client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
-                var task = HandleClientAsync(client, cancellationToken);
-
-                var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
-                if (!_connections.TryAdd(remoteEndpoint, task))
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    client.Close();
+                    var client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                    var task = HandleClientAsync(client, cancellationToken);
+
+                    var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
+                    if (!_connections.TryAdd(remoteEndpoint, task))
+                    {
+                        client.Close();
+                    }
                 }
             }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+            catch (System.Net.Sockets.SocketException) { }
         }
 
         private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)

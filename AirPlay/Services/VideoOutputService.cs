@@ -139,14 +139,14 @@ namespace AirPlay.Services
                 if (ffplayPath == null)
                 {
                     Console.WriteLine("ffplay not found. Please ensure ffplay is in the application directory or PATH.");
-                    Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 2048000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
+                    Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 32768 -analyzeduration 1000000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
                     return;
                 }
 
                 var psi = new ProcessStartInfo
                 {
                     FileName = ffplayPath,
-                    Arguments = $"-f h264 -probesize 2048000 -fflags nobuffer -flags low_delay -framedrop \"{pipePath}\"",
+                    Arguments = $"-f h264 -probesize 32768 -analyzeduration 1000000 -fflags nobuffer -flags low_delay -framedrop \"{pipePath}\"",
                     UseShellExecute = false,
                     CreateNoWindow = false
                 };
@@ -160,7 +160,7 @@ namespace AirPlay.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to launch ffplay: {ex.Message}");
-                Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 2048000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
+                Console.WriteLine($"  You can manually connect with: ffplay -f h264 -probesize 32768 -analyzeduration 1000000 -fflags nobuffer -flags low_delay -framedrop {pipePath}");
             }
         }
 
