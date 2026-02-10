@@ -96,18 +96,9 @@ namespace AirPlay
                 }
             }
 
-            // Initialize video output (named pipe for external player)
-            try
-            {
-                _videoOutput = new VideoOutputService();
-                _videoOutput.Initialize();
-                Console.WriteLine("Video output initialized successfully");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to initialize video output: {ex.Message}");
-                Console.WriteLine("Continuing without video output...");
-            }
+            // Initialize video output service (will be started/stopped per mirroring session)
+            _videoOutput = new VideoOutputService();
+            Console.WriteLine("Video output service ready (will auto-launch ffplay when mirroring starts)");
 
             await _airPlayReceiver.StartListeners(cancellationToken);
             await _airPlayReceiver.StartMdnsAsync().ConfigureAwait(false);
@@ -126,6 +117,24 @@ namespace AirPlay
                 lock (_audioOutputLock)
                 {
                     _audioOutput?.HandleFlush();
+                }
+            };
+
+            _airPlayReceiver.OnMirroringStartedReceived += (s, e) =>
+            {
+                Console.WriteLine("Mirroring started - launching video player...");
+                lock (_videoOutputLock)
+                {
+                    _videoOutput?.StartMirroring();
+                }
+            };
+
+            _airPlayReceiver.OnMirroringStoppedReceived += (s, e) =>
+            {
+                Console.WriteLine("Mirroring stopped - closing video player...");
+                lock (_videoOutputLock)
+                {
+                    _videoOutput?.StopMirroring();
                 }
             };
 

@@ -19,6 +19,8 @@ namespace AirPlay
         public event EventHandler<H264Data> OnH264DataReceived;
         public event EventHandler<PcmData> OnPCMDataReceived;
         public event EventHandler OnAudioFlushReceived;
+        public event EventHandler OnMirroringStartedReceived;
+        public event EventHandler OnMirroringStoppedReceived;
 
         public const string AirPlayType = "_airplay._tcp";
         public const string AirTunesType = "_raop._tcp";
@@ -145,6 +147,16 @@ namespace AirPlay
         public void OnAudioFlush()
         {
             OnAudioFlushReceived?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void OnMirroringStarted()
+        {
+            OnMirroringStartedReceived?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void OnMirroringStopped()
+        {
+            OnMirroringStoppedReceived?.Invoke(this, EventArgs.Empty);
         }
 
         public void Dispose()
