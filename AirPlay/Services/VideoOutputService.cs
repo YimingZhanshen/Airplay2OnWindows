@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -184,11 +185,12 @@ namespace AirPlay.Services
                     CreateNoWindow = true
                 };
                 var proc = Process.Start(psi);
-                var output = proc?.StandardOutput.ReadLine();
+                var output = proc?.StandardOutput.ReadToEnd()?.Trim();
                 proc?.WaitForExit();
-                if (proc?.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
+                var firstLine = output?.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
+                if (proc?.ExitCode == 0 && !string.IsNullOrWhiteSpace(firstLine))
                 {
-                    return output.Trim();
+                    return firstLine;
                 }
             }
             catch { }
@@ -206,7 +208,10 @@ namespace AirPlay.Services
                     {
                         Console.WriteLine($"Stopping ffplay (PID: {_ffplayProcess.Id})...");
                         _ffplayProcess.Kill();
-                        _ffplayProcess.WaitForExit(3000);
+                        if (!_ffplayProcess.WaitForExit(3000))
+                        {
+                            Console.WriteLine("Warning: ffplay did not exit within timeout");
+                        }
                     }
                 }
                 catch (Exception ex)

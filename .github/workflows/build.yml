@@ -31,18 +31,40 @@ jobs:
     - name: Publish
       run: dotnet publish AirPlay/AirPlay.csproj --configuration Release --runtime win-x64 --self-contained true --output ./publish/win-x64
 
+    - name: Cache FFmpeg
+      id: cache-ffmpeg
+      uses: actions/cache@v4
+      with:
+        path: ffmpeg-cache
+        key: ffmpeg-win64-gpl-v1
+
     - name: Download FFmpeg
+      if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
         $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
         Invoke-WebRequest -Uri $ffmpegUrl -OutFile ffmpeg.zip
         Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-tmp
-        # Copy ffmpeg.exe and ffplay.exe to publish directory
         $binDir = Get-ChildItem -Path ffmpeg-tmp -Recurse -Directory -Filter "bin" | Select-Object -First 1
-        Copy-Item "$($binDir.FullName)\ffmpeg.exe" -Destination ./publish/win-x64/
-        Copy-Item "$($binDir.FullName)\ffplay.exe" -Destination ./publish/win-x64/
+        New-Item -ItemType Directory -Force -Path ffmpeg-cache
+        Copy-Item "$($binDir.FullName)\ffmpeg.exe" -Destination ffmpeg-cache/
+        Copy-Item "$($binDir.FullName)\ffplay.exe" -Destination ffmpeg-cache/
+
+    - name: Copy FFmpeg to publish
+      shell: pwsh
+      run: |
+        Copy-Item "ffmpeg-cache\ffmpeg.exe" -Destination ./publish/win-x64/
+        Copy-Item "ffmpeg-cache\ffplay.exe" -Destination ./publish/win-x64/
+
+    - name: Cache libfdk-aac
+      id: cache-fdkaac
+      uses: actions/cache@v4
+      with:
+        path: fdkaac-cache
+        key: fdkaac-win64-v1
 
     - name: Build libfdk-aac from source
+      if: steps.cache-fdkaac.outputs.cache-hit != 'true'
       shell: bash
       run: |
         # Build FDK-AAC from official source using MSYS2 (pre-installed on windows-latest)
@@ -61,7 +83,7 @@ jobs:
         cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ..
         cmake --build . --config Release
 
-        # Find and copy the DLL
+        # Find and copy the DLL to cache
         echo "Built files:"
         find . -name "*.dll" -type f
         DLL_PATH=$(find . -name "fdk-aac*.dll" -o -name "libfdk-aac*.dll" | head -1)
@@ -69,8 +91,13 @@ jobs:
           echo "ERROR: No FDK-AAC DLL found after build"
           exit 1
         fi
-        cp -v "$DLL_PATH" ../../publish/win-x64/libfdk-aac-2.dll
-        echo "Successfully built and copied libfdk-aac-2.dll"
+        mkdir -p ../../fdkaac-cache
+        cp -v "$DLL_PATH" ../../fdkaac-cache/libfdk-aac-2.dll
+        echo "Successfully built and cached libfdk-aac-2.dll"
+
+    - name: Copy libfdk-aac to publish
+      shell: bash
+      run: cp -v fdkaac-cache/libfdk-aac-2.dll publish/win-x64/libfdk-aac-2.dll
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
