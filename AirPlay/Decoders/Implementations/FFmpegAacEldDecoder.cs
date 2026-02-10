@@ -35,7 +35,7 @@ namespace AirPlay.Decoders.Implementations
         private int _frameLength;
         private bool _disposed;
         private bool _initialized;
-        private bool _firstFrame = true;
+        private int _firstFrame = 1; // 1 = true, 0 = false (for thread-safe Interlocked access)
         private int _freqIdx;
 
         public AudioFormat Type => AudioFormat.AAC_ELD;
@@ -108,8 +108,8 @@ namespace AirPlay.Decoders.Implementations
             try
             {
                 // Build LOAS/LATM frame wrapping the raw AAC-ELD data
-                byte[] loasFrame = BuildLoasFrame(input, _firstFrame);
-                _firstFrame = false;
+                bool includeConfig = Interlocked.Exchange(ref _firstFrame, 0) == 1;
+                byte[] loasFrame = BuildLoasFrame(input, includeConfig);
 
                 _ffmpegInput.Write(loasFrame, 0, loasFrame.Length);
                 _ffmpegInput.Flush();
@@ -330,13 +330,14 @@ namespace AirPlay.Decoders.Implementations
 
             public byte[] ToByteArray()
             {
+                var result = new List<byte>(_bytes);
                 if (_bitsInCurrentByte > 0)
                 {
                     // Pad remaining bits with zeros
-                    _currentByte <<= (8 - _bitsInCurrentByte);
-                    _bytes.Add((byte)_currentByte);
+                    int padded = _currentByte << (8 - _bitsInCurrentByte);
+                    result.Add((byte)padded);
                 }
-                return _bytes.ToArray();
+                return result.ToArray();
             }
         }
     }
