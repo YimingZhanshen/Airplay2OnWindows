@@ -37,6 +37,8 @@ namespace AirPlay.Decoders.Implementations
         private bool _initialized;
         private readonly byte[] _adtsHeader = new byte[7];
         private int _adtsFreqIdx;
+        private int _decodeCallCount;
+        private int _totalFramesDecoded;
 
         public AudioFormat Type => AudioFormat.AAC_ELD;
 
@@ -83,11 +85,8 @@ namespace AirPlay.Decoders.Implementations
                         string line;
                         while ((line = reader.ReadLine()) != null)
                         {
-                            // Only log critical errors, not per-frame decode warnings
-                            if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
-                            {
-                                Console.WriteLine($"FFmpeg: {line}");
-                            }
+                            // Log all FFmpeg stderr output for debugging
+                            Console.WriteLine($"[DEBUG-FFMPEG-STDERR] {line}");
                         }
                     }
                     catch { /* ignore */ }
@@ -115,10 +114,17 @@ namespace AirPlay.Decoders.Implementations
         public int DecodeFrame(byte[] input, ref byte[] output, int length)
         {
             if (!_initialized || _ffmpegProcess == null || _ffmpegProcess.HasExited)
+            {
+                _decodeCallCount++;
+                if (_decodeCallCount <= 3 || _decodeCallCount % 500 == 0)
+                    Console.WriteLine($"[DEBUG-FFMPEG] DecodeFrame called but process not ready: initialized={_initialized}, process={_ffmpegProcess != null}, hasExited={_ffmpegProcess?.HasExited}");
                 return -1;
+            }
 
             try
             {
+                _decodeCallCount++;
+
                 // Wrap the raw AAC frame in an ADTS header for FFmpeg to parse.
                 // ADTS profile is set to AAC-LC (profile=2) since ADTS only has a 2-bit
                 // profile field and cannot represent AAC-ELD. FFmpeg's decoder handles
@@ -130,6 +136,9 @@ namespace AirPlay.Decoders.Implementations
                 _ffmpegInput.Write(_adtsHeader, 0, 7);
                 _ffmpegInput.Write(input, 0, input.Length);
                 _ffmpegInput.Flush();
+
+                if (_decodeCallCount <= 3)
+                    Console.WriteLine($"[DEBUG-FFMPEG] Wrote frame #{_decodeCallCount}: inputLen={input.Length}, adtsFrameLen={frameLen}, expecting {_pcmOutputSize} bytes PCM output");
 
                 // Read decoded PCM from FFmpeg stdout
                 int bytesToRead = _pcmOutputSize;
@@ -148,16 +157,25 @@ namespace AirPlay.Decoders.Implementations
                     totalRead += read;
                 }
 
+                _totalFramesDecoded++;
+
+                if (_decodeCallCount <= 5 || _decodeCallCount % 500 == 0)
+                    Console.WriteLine($"[DEBUG-FFMPEG] Frame #{_decodeCallCount}: read {totalRead}/{bytesToRead} bytes (attemptsLeft={maxAttempts}), totalDecoded={_totalFramesDecoded}");
+
                 if (totalRead < bytesToRead)
                 {
                     // Partial read - zero fill the rest
                     Array.Clear(output, totalRead, bytesToRead - totalRead);
+                    if (_decodeCallCount <= 10)
+                        Console.WriteLine($"[DEBUG-FFMPEG] WARNING: Partial read! Only {totalRead} of {bytesToRead} bytes, zero-filled remainder");
                 }
 
                 return 0;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                if (_decodeCallCount <= 5 || _decodeCallCount % 500 == 0)
+                    Console.WriteLine($"[DEBUG-FFMPEG] DecodeFrame exception #{_decodeCallCount}: {ex.GetType().Name}: {ex.Message}");
                 return -1;
             }
         }

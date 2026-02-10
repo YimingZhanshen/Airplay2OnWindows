@@ -454,14 +454,17 @@ namespace AirPlay.Listeners
                             // (ports 7002/7003 must be released first)
                             if (session.AudioControlListener != null)
                             {
+                                Console.WriteLine("[DEBUG-SETUP] Stopping existing AudioListener before creating new one...");
                                 try { await session.AudioControlListener.StopAsync(); }
-                                catch (Exception ex) { Console.WriteLine($"Error stopping old audio listener: {ex.Message}"); }
+                                catch (Exception ex) { Console.WriteLine($"[DEBUG-SETUP] Error stopping old audio listener: {ex.Message}"); }
                                 session.AudioControlListener = null;
                             }
 
+                            Console.WriteLine($"[DEBUG-SETUP] Creating new AudioListener: format={session.AudioFormat}, ct={session.AudioCompressionType}, spf={session.AudioSamplesPerFrame}, mirroring={session.MirroringSession}");
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
                             var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
+                            Console.WriteLine("[DEBUG-SETUP] AudioListener started successfully");
 
                             session.AudioControlListener = control;
                         }
@@ -564,6 +567,7 @@ namespace AirPlay.Listeners
             }
             if (request.Type == RequestType.TEARDOWN)
             {
+                Console.WriteLine("[DEBUG-TEARDOWN] TEARDOWN request received");
                 var plistReader = new BinaryPlistReader();
                 using (var mem = new MemoryStream(request.Body))
                 {
@@ -574,10 +578,12 @@ namespace AirPlay.Listeners
                         // Always one foreach request
                         var stream = (Dictionary<object, object>)((object[])plist["streams"]).Last();
                         var type = (short)stream["type"];
+                        Console.WriteLine($"[DEBUG-TEARDOWN] Stream type: {type}");
 
                         // If screen Mirroring
                         if (type == 110)
                         {
+                            Console.WriteLine("[DEBUG-TEARDOWN] Stopping mirroring session");
                             // Stop mirroring session
                             if (session.MirroringListener != null)
                             {
@@ -592,6 +598,7 @@ namespace AirPlay.Listeners
                         // If audio session
                         if (type == 96)
                         {
+                            Console.WriteLine("[DEBUG-TEARDOWN] Stopping audio session");
                             // Stop audio session
                             if (session.AudioControlListener != null)
                             {
