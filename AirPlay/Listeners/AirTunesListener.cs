@@ -296,6 +296,8 @@ namespace AirPlay.Listeners
                             {
                                 if (kv.Value is byte[] ba)
                                     Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = byte[{ba.Length}]");
+                                else if (kv.Value is short sv)
+                                    Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = {sv} (unsigned={(ushort)sv})");
                                 else
                                     Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = {kv.Value}");
                             }

@@ -484,7 +484,7 @@ namespace AirPlay.Listeners
             File.WriteAllBytes($"{fPath}raw_{seqnum}", raw);
 #endif
             /* RAW -> PCM */
-            if (_queueCallCount <= 5 || _queueCallCount % 500 == 0)
+            if (_queueCallCount <= 10 || _queueCallCount % 200 == 0)
             {
                 // Log first bytes of decrypted payload for verification
                 // Valid AAC-ELD frames start with: 0x8c, 0x8d, 0x8e, 0x80, 0x81, 0x82, 0x20
@@ -500,8 +500,21 @@ namespace AirPlay.Listeners
             if (res != 0)
             {
                 output = new byte[length];
-                if (_queueCallCount <= 5 || _queueCallCount % 500 == 0)
-                    Console.WriteLine($"Decoding error. Decoder: {_decoder.Type} Code: {res}");
+                if (_queueCallCount <= 10 || _queueCallCount % 200 == 0)
+                    Console.WriteLine($"[DEBUG-DECODE] #{_queueCallCount}: ERROR decoder={_decoder.Type}, code=0x{res:X} ({res}), inputLen={raw.Length}, outputLen={length}");
+            }
+            else
+            {
+                if (_queueCallCount <= 10 || _queueCallCount % 200 == 0)
+                {
+                    // Check if PCM output is silence
+                    bool isSilence = true;
+                    for (int i = 0; i < Math.Min(output.Length, 64); i++)
+                    {
+                        if (output[i] != 0) { isSilence = false; break; }
+                    }
+                    Console.WriteLine($"[DEBUG-DECODE] #{_queueCallCount}: OK decoder={_decoder.Type}, inputLen={raw.Length}, outputLen={length}, silence={isSilence}");
+                }
             }
 
 #if DUMP
@@ -703,34 +716,67 @@ namespace AirPlay.Listeners
                 else if(audioFormat == AudioFormat.AAC_ELD)
                 {
                     // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
-                    // (AAC-ELD -> PCM) using FFmpeg subprocess decoder with LATM wrapping
+                    // (AAC-ELD -> PCM)
+                    // Try native FDK-AAC first (direct P/Invoke, no framing needed),
+                    // then FFmpeg subprocess with LOAS wrapping as fallback.
 
                     var frameLength = spf > 0 ? spf : 480;
                     var numChannels = 2;
                     var bitDepth = 16;
                     var sampleRate = 44100;
 
+                    // Try 1: Native FDK-AAC library (same approach as itskenny0/airplayreceiver)
                     try
                     {
-                        var aacEldDecoder = new Decoders.Implementations.FFmpegAacEldDecoder();
-                        var ret = aacEldDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                        var nativeDecoder = new Decoders.Implementations.NativeFdkAacEldDecoder();
+                        var ret = nativeDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                         if (ret == 0)
                         {
-                            _decoder = aacEldDecoder;
+                            _decoder = nativeDecoder;
+                            Console.WriteLine("[DEBUG] Using native FDK-AAC decoder for AAC-ELD");
                         }
                         else
                         {
-                            Console.WriteLine($"FFmpeg AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
-                            aacEldDecoder.Dispose();
-                            _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
-                            _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                            Console.WriteLine($"[DEBUG] Native FDK-AAC config error: 0x{ret:X}, trying FFmpeg...");
+                            nativeDecoder.Dispose();
                         }
+                    }
+                    catch (DllNotFoundException ex)
+                    {
+                        Console.WriteLine($"[DEBUG] Native FDK-AAC library not found: {ex.Message}");
+                        Console.WriteLine("[DEBUG] To use native decoder, place libfdk-aac-2.dll (Windows) or libfdk-aac.so.2 (Linux) in app directory");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"FFmpeg AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
-                        _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
-                        _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                        Console.WriteLine($"[DEBUG] Native FDK-AAC failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+
+                    // Try 2: FFmpeg subprocess with LOAS wrapping
+                    if (_decoder == null)
+                    {
+                        try
+                        {
+                            var ffmpegDecoder = new Decoders.Implementations.FFmpegAacEldDecoder();
+                            var ret = ffmpegDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                            if (ret == 0)
+                            {
+                                _decoder = ffmpegDecoder;
+                                Console.WriteLine("[DEBUG] Using FFmpeg subprocess decoder for AAC-ELD");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"[DEBUG] FFmpeg decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
+                                ffmpegDecoder.Dispose();
+                                _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                                _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[DEBUG] FFmpeg decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
+                            _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
+                            _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                        }
                     }
                 }
                 else if (audioFormat == AudioFormat.PCM)
