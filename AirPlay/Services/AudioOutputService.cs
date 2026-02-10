@@ -182,10 +182,23 @@ namespace AirPlay.Services
                     _streamProvider.AddSamples(buffer, offset, count);
                     _sampleCount++;
 
+                    // Log first few samples for debugging
+                    if (_sampleCount <= 5 || _sampleCount % 500 == 0)
+                    {
+                        // Check if data is all zeros (silence)
+                        bool allZeros = true;
+                        int checkLen = Math.Min(count, 100);
+                        for (int i = offset; i < offset + checkLen; i++)
+                        {
+                            if (buffer[i] != 0) { allZeros = false; break; }
+                        }
+                        Console.WriteLine($"[DEBUG-AUDIO] AddSamples #{_sampleCount}: count={count}, allZeros={allZeros}, queue={_streamProvider.QueuedBuffers}, initialized={_initialized}, playing={_isPlaying}");
+                    }
+
                     // Initialize DirectSound AFTER prebuffering
                     if (!_initialized && _sampleCount >= PREBUFFER_PACKETS)
                     {
-                        Console.WriteLine($"Prebuffered {_streamProvider.QueuedBuffers} packets, calling Init()...");
+                        Console.WriteLine($"[DEBUG-AUDIO] Prebuffered {_streamProvider.QueuedBuffers} packets, calling Init()...");
                         _waveOut.Init(_streamProvider);
                         _initialized = true;
                     }
@@ -195,7 +208,7 @@ namespace AirPlay.Services
                     {
                         _waveOut.Play();
                         _isPlaying = true;
-                        Console.WriteLine($"Audio playback started ({_streamProvider.QueuedBuffers} packets buffered)");
+                        Console.WriteLine($"[DEBUG-AUDIO] Audio playback started ({_streamProvider.QueuedBuffers} packets buffered)");
                     }
 
                     // Log status periodically
@@ -203,12 +216,12 @@ namespace AirPlay.Services
                     {
                         var state = _waveOut.PlaybackState;
                         var queued = _streamProvider.QueuedBuffers;
-                        Console.WriteLine($"Audio: {_sampleCount} packets | Queue: {queued} | State: {state}");
+                        Console.WriteLine($"[DEBUG-AUDIO] Audio: {_sampleCount} packets | Queue: {queued} | State: {state}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Audio error: {ex.Message}");
+                    Console.WriteLine($"[DEBUG-AUDIO] Audio error in AddSamples: {ex.GetType().Name}: {ex.Message}");
                 }
             }
         }

@@ -145,10 +145,18 @@ namespace AirPlay.Listeners
                         $"^{RequestConst.FLUSH}[.]*|" +
                         $"^{RequestConst.OPTIONS}[.]*|" +
                         $"^{RequestConst.PAUSE}[.]*|" +
+                        $"^{RequestConst.SETPEERS}[.]*|" +
                         $"^{RequestConst.TEARDOWN}[.]*";
 
                     var r = new Regex(pattern, RegexOptions.Multiline);
                     var m = r.Matches(raw);
+
+                    if (m.Count == 0 && raw.Length > 0)
+                    {
+                        // Log first 200 chars of unrecognized data for debugging
+                        var preview = raw.Length > 200 ? raw.Substring(0, 200) : raw;
+                        Console.WriteLine($"[DEBUG-RTSP] Unrecognized data (no regex match), len={raw.Length}, preview: {preview}");
+                    }
 
                     // Split requests and create models
                     var requests = new List<Request>();
@@ -172,9 +180,13 @@ namespace AirPlay.Listeners
                     {
                         var response = request.GetBaseResponse();
 
+                        var cseq = request.Headers.ContainsKey("CSeq") ? request.Headers["CSeq"] : "?";
+                        Console.WriteLine($"[DEBUG-RTSP] >>> {request.Type} CSeq={cseq}");
+
                         await OnDataReceivedAsync(request, response, cancellationToken).ConfigureAwait(false);
                         await SendResponseAsync(stream, response);
-                    }
+
+                        Console.WriteLine($"[DEBUG-RTSP] <<< {response.StatusCode}");                    }
                 }
 
                 // If we have read some bytes, leave connection open and wait for next message

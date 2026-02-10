@@ -13,5 +13,6 @@
         public const string TEARDOWN = "54454152444F574E";
         public const string OPTIONS = "4F5054494F4E53";
         public const string PAUSE = "5041555345";
+        public const string SETPEERS = "534554504545525320";
     }
 }

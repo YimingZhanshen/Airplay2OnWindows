@@ -291,6 +291,16 @@ namespace AirPlay.Listeners
                             // Always one foreach request
                             var stream = (Dictionary<object, object>)((object[])plist["streams"])[0];
                             var type = (short)stream["type"];
+                            Console.WriteLine($"[DEBUG-SETUP] Stream type={type}, keys=[{string.Join(", ", stream.Keys)}]");
+                            foreach (var kv in stream)
+                            {
+                                if (kv.Value is byte[] ba)
+                                    Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = byte[{ba.Length}]");
+                                else if (kv.Value is short sv)
+                                    Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = {sv} (unsigned={(ushort)sv})");
+                                else
+                                    Console.WriteLine($"[DEBUG-SETUP]   {kv.Key} = {kv.Value}");
+                            }
 
                             // If screen Mirroring
                             if (type == 110)
@@ -388,6 +398,7 @@ namespace AirPlay.Listeners
                         }
                         else
                         {
+                            Console.WriteLine($"[DEBUG-SETUP] Initial SETUP (keys/timing): et={plist.Contains("et")}, ekey={plist.Contains("ekey")}, eiv={plist.Contains("eiv")}, isScreenMirroringSession={plist.Contains("isScreenMirroringSession")}, timingPort={plist.Contains("timingPort")}");
                             // Read ekey and eiv used to decode video and audio data
                             if (plist.Contains("et"))
                             {
@@ -454,14 +465,18 @@ namespace AirPlay.Listeners
                             // (ports 7002/7003 must be released first)
                             if (session.AudioControlListener != null)
                             {
+                                Console.WriteLine("[DEBUG-SETUP] Stopping existing AudioListener before creating new one...");
                                 try { await session.AudioControlListener.StopAsync(); }
-                                catch (Exception ex) { Console.WriteLine($"Error stopping old audio listener: {ex.Message}"); }
+                                catch (Exception ex) { Console.WriteLine($"[DEBUG-SETUP] Error stopping old audio listener: {ex.Message}"); }
                                 session.AudioControlListener = null;
                             }
 
+                            Console.WriteLine($"[DEBUG-SETUP] Creating new AudioListener: format={session.AudioFormat}, ct={session.AudioCompressionType}, spf={session.AudioSamplesPerFrame}, mirroring={session.MirroringSession}");
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
-                            var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig);
+                            bool isMirroring = session.MirroringSession.HasValue && session.MirroringSession.Value;
+                            var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig, isMirroring);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
+                            Console.WriteLine("[DEBUG-SETUP] AudioListener started successfully");
 
                             session.AudioControlListener = control;
                         }
@@ -480,6 +495,7 @@ namespace AirPlay.Listeners
             }
             if (request.Type == RequestType.RECORD)
             {
+                Console.WriteLine("[DEBUG-RTSP] RECORD request received");
                 response.Headers.Add("Audio-Latency", "0"); // 11025
                 // response.Headers.Add("Audio-Jack-Status", "connected; type=analog");
             }
@@ -530,11 +546,16 @@ namespace AirPlay.Listeners
             }
             if(request.Type == RequestType.OPTIONS)
             {
-                response.Headers.Add("Public", "SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER, ANNOUNCE");
+                response.Headers.Add("Public", "SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER, ANNOUNCE, SETPEERS");
             }
             if(request.Type == RequestType.ANNOUNCE)
             {
 
+            }
+            if(request.Type == RequestType.SETPEERS)
+            {
+                Console.WriteLine("[DEBUG-RTSP] SETPEERS request received - returning 200 OK");
+                // Just acknowledge the peer list, no action needed
             }
             if(request.Type == RequestType.FLUSH)
             {
@@ -564,6 +585,7 @@ namespace AirPlay.Listeners
             }
             if (request.Type == RequestType.TEARDOWN)
             {
+                Console.WriteLine("[DEBUG-TEARDOWN] TEARDOWN request received");
                 var plistReader = new BinaryPlistReader();
                 using (var mem = new MemoryStream(request.Body))
                 {
@@ -574,10 +596,12 @@ namespace AirPlay.Listeners
                         // Always one foreach request
                         var stream = (Dictionary<object, object>)((object[])plist["streams"]).Last();
                         var type = (short)stream["type"];
+                        Console.WriteLine($"[DEBUG-TEARDOWN] Stream type: {type}");
 
                         // If screen Mirroring
                         if (type == 110)
                         {
+                            Console.WriteLine("[DEBUG-TEARDOWN] Stopping mirroring session");
                             // Stop mirroring session
                             if (session.MirroringListener != null)
                             {
@@ -592,6 +616,7 @@ namespace AirPlay.Listeners
                         // If audio session
                         if (type == 96)
                         {
+                            Console.WriteLine("[DEBUG-TEARDOWN] Stopping audio session");
                             // Stop audio session
                             if (session.AudioControlListener != null)
                             {

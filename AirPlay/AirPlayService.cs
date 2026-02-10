@@ -147,8 +147,21 @@ namespace AirPlay
             };
 
             _audiobuf = new List<byte>();
+            int pcmReceivedCount = 0;
             _airPlayReceiver.OnPCMDataReceived += (s, e) =>
             {
+                pcmReceivedCount++;
+                if (pcmReceivedCount <= 5 || pcmReceivedCount % 500 == 0)
+                {
+                    bool allZeros = true;
+                    int checkLen = Math.Min(e.Length, 100);
+                    for (int i = 0; i < checkLen; i++)
+                    {
+                        if (e.Data[i] != 0) { allZeros = false; break; }
+                    }
+                    Console.WriteLine($"[DEBUG-PCM] OnPCMDataReceived #{pcmReceivedCount}: len={e.Length}, allZeros={allZeros}");
+                }
+
                 // Play audio through speakers
                 lock (_audioOutputLock)
                 {

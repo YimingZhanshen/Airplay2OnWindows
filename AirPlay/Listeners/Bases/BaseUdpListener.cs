@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,10 +12,14 @@ namespace AirPlay.Listeners
 
         private readonly Socket _cSocket;
         private readonly Socket _dSocket;
+        private readonly ushort _cPort;
+        private readonly ushort _dPort;
         private readonly CancellationTokenSource _cancellationTokenSource;
 
         public BaseUdpListener(ushort cPort, ushort dPort)
         {
+            _cPort = cPort;
+            _dPort = dPort;
             _cSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp);
             _dSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp);
 
@@ -28,6 +33,7 @@ namespace AirPlay.Listeners
         {
             var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _cancellationTokenSource.Token);
 
+            Console.WriteLine($"[DEBUG-UDP] StartAsync: cSocket on port {_cPort}, dSocket on port {_dPort}");
             Task.Run(() => OnRawCSocketAsync(_cSocket, source.Token), source.Token);
             Task.Run(() => OnRawDSocketAsync(_dSocket, source.Token), source.Token);
 
@@ -36,10 +42,12 @@ namespace AirPlay.Listeners
 
         public override Task StopAsync()
         {
+            Console.WriteLine("[DEBUG-UDP] StopAsync called - cancelling tokens and closing sockets");
             _cancellationTokenSource.Cancel();
 
             _cSocket.Close(CloseTimeout);
             _dSocket.Close(CloseTimeout);
+            Console.WriteLine("[DEBUG-UDP] StopAsync completed");
 
             return Task.CompletedTask;
         }
