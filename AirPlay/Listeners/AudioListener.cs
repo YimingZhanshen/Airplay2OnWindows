@@ -528,7 +528,7 @@ namespace AirPlay.Listeners
             else if(audioFormat == AudioFormat.AAC_ELD)
             {
                 // RTP info: 96 mpeg4-generic/44100/2, 96 mode=AAC-eld; constantDuration=480
-                // (AAC-ELD -> PCM) using FDK AAC native decoder
+                // (AAC-ELD -> PCM) using FFmpeg subprocess decoder
 
                 var frameLength = spf > 0 ? spf : 480;
                 var numChannels = 2;
@@ -537,23 +537,23 @@ namespace AirPlay.Listeners
 
                 try
                 {
-                    var fdkDecoder = new Decoders.Implementations.FdkAacEldDecoder();
-                    var ret = fdkDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
+                    var ffmpegDecoder = new Decoders.Implementations.FdkAacEldDecoder();
+                    var ret = ffmpegDecoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                     if (ret == 0)
                     {
-                        _decoder = fdkDecoder;
+                        _decoder = ffmpegDecoder;
                     }
                     else
                     {
-                        Console.WriteLine($"FDK AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
-                        fdkDecoder.Dispose();
+                        Console.WriteLine($"FFmpeg AAC-ELD decoder config failed (error {ret}), falling back to SharpJaad AAC-LC");
+                        ffmpegDecoder.Dispose();
                         _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
                         _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"FDK AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
+                    Console.WriteLine($"FFmpeg AAC-ELD decoder unavailable ({ex.Message}), falling back to SharpJaad AAC-LC");
                     _decoder = new AACDecoder(TransportType.TT_MP4_RAW, AudioObjectType.AOT_AAC_LC, 1);
                     _decoder.Config(sampleRate, numChannels, bitDepth, frameLength);
                 }
