@@ -50,7 +50,7 @@ jobs:
         export PATH="/c/msys64/mingw64/bin:/c/msys64/usr/bin:$PATH"
 
         # Install build dependencies
-        pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make autoconf automake libtool
+        pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make
 
         # Clone and build fdk-aac
         git clone --depth 1 https://github.com/mstorsjo/fdk-aac.git fdk-aac-src
@@ -62,8 +62,14 @@ jobs:
         cmake --build . --config Release
 
         # Find and copy the DLL
+        echo "Built files:"
         find . -name "*.dll" -type f
-        cp -v $(find . -name "fdk-aac*.dll" -o -name "libfdk-aac*.dll" | head -1) ../../publish/win-x64/libfdk-aac-2.dll
+        DLL_PATH=$(find . -name "fdk-aac*.dll" -o -name "libfdk-aac*.dll" | head -1)
+        if [ -z "$DLL_PATH" ]; then
+          echo "ERROR: No FDK-AAC DLL found after build"
+          exit 1
+        fi
+        cp -v "$DLL_PATH" ../../publish/win-x64/libfdk-aac-2.dll
         echo "Successfully built and copied libfdk-aac-2.dll"
 
     - name: Upload build artifacts
