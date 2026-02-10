@@ -109,15 +109,13 @@ namespace AirPlay.Services
             // Apply volume scaling to 16-bit PCM samples
             if (_volume < 0.999f)
             {
-                for (int i = offset; i < offset + bytesWritten; i += 2)
+                int end = offset + bytesWritten;
+                for (int i = offset; i + 1 < end && i + 1 < buffer.Length; i += 2)
                 {
-                    if (i + 1 < offset + bytesWritten)
-                    {
-                        short sample = (short)(buffer[i] | (buffer[i + 1] << 8));
-                        sample = (short)(sample * _volume);
-                        buffer[i] = (byte)(sample & 0xFF);
-                        buffer[i + 1] = (byte)((sample >> 8) & 0xFF);
-                    }
+                    short sample = (short)(buffer[i] | (buffer[i + 1] << 8));
+                    sample = (short)(sample * _volume);
+                    buffer[i] = (byte)(sample & 0xFF);
+                    buffer[i + 1] = (byte)((sample >> 8) & 0xFF);
                 }
             }
 
