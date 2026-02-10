@@ -9,6 +9,7 @@ Open-source AirPlay 2 receiver for Windows, supporting **screen mirroring** (wit
 ## Features
 
 - **Screen Mirroring** — Mirror your iPhone/iPad/Mac screen to Windows with H.264 video and AAC-ELD audio
+- **Auto Video Display** — Video player (ffplay) launches automatically when mirroring starts and closes when mirroring stops. Supports repeated connections without restarting the application.
 - **Audio Streaming** — Play music and podcasts via AirPlay (ALAC and AAC codecs)
 - **Volume Control** — Remote volume adjustment from your Apple device
 - **Auto-Discovery** — Bonjour/mDNS service advertising, your Windows PC appears as an AirPlay receiver automatically
@@ -17,14 +18,23 @@ Open-source AirPlay 2 receiver for Windows, supporting **screen mirroring** (wit
 
 ### Download
 
-Download the latest build from [GitHub Actions](https://github.com/YimingZhanshen/Airplay2OnWindows/actions) artifacts. The package includes all required dependencies (FFmpeg, libfdk-aac).
+Download the latest release from [GitHub Releases](https://github.com/YimingZhanshen/Airplay2OnWindows/releases). The package includes all required dependencies (FFmpeg, libfdk-aac).
 
-### Manual Setup
+### Usage
+
+1. Extract the downloaded package
+2. Run the application
+3. On your Apple device, open Control Center → Screen Mirroring → select your PC
+4. The mirroring window will appear automatically — no manual setup needed!
+
+> **Note**: For audio-only streaming (e.g., music), simply select your PC as the AirPlay output device from any audio app on your Apple device.
+
+### Build from Source
 
 #### Prerequisites
 
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later
-- [FFmpeg](https://github.com/BtbN/FFmpeg-Builds/releases) — `ffmpeg.exe` and `ffplay.exe` in the application directory or PATH
+- [FFmpeg](https://github.com/BtbN/FFmpeg-Builds/releases) — `ffplay.exe` in the application directory or PATH
 - [libfdk-aac](https://github.com/mstorsjo/fdk-aac) — `libfdk-aac-2.dll` in the application directory (required for screen mirroring audio)
 
 #### Build
@@ -37,15 +47,17 @@ dotnet build AirPlay.sln --configuration Release
 #### Run
 
 1. Start the application
-2. Open a video player to receive the mirroring stream:
-   ```bash
-   ffplay -f h264 -probesize 32 -analyzeduration 0 -fflags nobuffer -flags low_delay \\.\pipe\AirPlayVideo
-   ```
-3. On your Apple device, open Control Center → Screen Mirroring → select your PC
+2. On your Apple device, open Control Center → Screen Mirroring → select your PC
+3. The mirroring video window (ffplay) will launch automatically
+
+> **Fallback**: If ffplay is not found, you can manually open a video player:
+> ```bash
+> ffplay -f h264 -probesize 32768 -analyzeduration 0 -fflags nobuffer+discardcorrupt -flags low_delay -framedrop -avioflags direct -vf setpts=0 \\.\pipe\AirPlayVideo
+> ```
 
 ## Building libfdk-aac on Windows
 
-该 `libfdk-aac-2.dll` is required for decoding AAC-ELD audio during screen mirroring. You can build it from source:
+The `libfdk-aac-2.dll` is required for decoding AAC-ELD audio during screen mirroring. You can build it from source:
 
 1. Install [MSYS2](https://www.msys2.org/)
 2. Open MSYS2 MinGW 64-bit terminal and run:
@@ -71,11 +83,11 @@ Apple Device ──AirPlay──► AirPlay Receiver (.NET 8)
                     │         │
               ┌─────┴───┐    │
               ▼         ▼    ▼
-          Named Pipe  FDK-AAC  NAudio
-          (ffplay)   Decoder  DirectSound
+          ffplay     FDK-AAC  NAudio
+        (auto-launch) Decoder  DirectSound
 ```
 
-- **Video**: H.264 stream written to a named pipe (`\\.\pipe\AirPlayVideo`), consumed by ffplay or any compatible player
+- **Video**: H.264 stream written to a named pipe, ffplay is auto-launched to display the mirroring window when a device connects
 - **Mirroring Audio**: AAC-ELD decoded by native FDK-AAC library via P/Invoke, output through NAudio DirectSound
 - **Streaming Audio**: ALAC/AAC decoded and output through NAudio DirectSound
 

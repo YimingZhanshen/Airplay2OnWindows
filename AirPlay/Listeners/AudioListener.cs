@@ -444,8 +444,8 @@ namespace AirPlay.Listeners
             if (_queueCallCount <= 10 || _queueCallCount % 500 == 0)
                 Console.WriteLine($"[DEBUG-QUEUE] #{_queueCallCount}: seqnum={seqnum}, datalen={datalen}, payloadSize={datalen - 12}, bufferEmpty={raop_buffer.IsEmpty}, firstSeq={raop_buffer.FirstSeqNum}, lastSeq={raop_buffer.LastSeqNum}");
 
-            // Ignore, old
-            if (!raop_buffer.IsEmpty && seqnum < raop_buffer.FirstSeqNum && seqnum != 0)
+            // Ignore, old (use wraparound-aware comparison for 16-bit sequence numbers)
+            if (!raop_buffer.IsEmpty && SeqBefore(seqnum, raop_buffer.FirstSeqNum))
             {
                 if (_queueCallCount <= 10)
                     Console.WriteLine($"[DEBUG-QUEUE] #{_queueCallCount}: SKIP old seqnum={seqnum} < firstSeqNum={raop_buffer.FirstSeqNum}");
@@ -453,7 +453,8 @@ namespace AirPlay.Listeners
             }
 
             /* Check that there is always space in the buffer, otherwise flush */
-            if (raop_buffer.FirstSeqNum + RAOP_BUFFER_LENGTH < seqnum || seqnum == 0)
+            /* Use wraparound-aware gap detection: if seqnum is more than RAOP_BUFFER_LENGTH ahead of FirstSeqNum, flush */
+            if (!raop_buffer.IsEmpty && (ushort)(seqnum - raop_buffer.FirstSeqNum) >= RAOP_BUFFER_LENGTH)
             {
                 RaopBufferFlush(raop_buffer, seqnum);
             }
@@ -543,7 +544,7 @@ namespace AirPlay.Listeners
                 raop_buffer.IsEmpty = false;
             }
 
-            if (raop_buffer.LastSeqNum < seqnum)
+            if (SeqBefore(raop_buffer.LastSeqNum, seqnum))
             {
                 raop_buffer.LastSeqNum = seqnum;
             }
@@ -684,6 +685,16 @@ namespace AirPlay.Listeners
             }
 
             return 0;
+        }
+
+        /// <summary>
+        /// Wraparound-aware comparison for 16-bit sequence numbers.
+        /// Returns true if s1 is strictly before s2 in the circular sequence space.
+        /// When (s1 - s2) interpreted as signed 16-bit is negative, s1 is before s2.
+        /// </summary>
+        private static bool SeqBefore(ushort s1, ushort s2)
+        {
+            return ((short)(s1 - s2)) < 0;
         }
 
         private void InitializeDecoder (Session session)

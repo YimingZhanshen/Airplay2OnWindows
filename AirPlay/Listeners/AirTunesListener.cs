@@ -450,6 +450,7 @@ namespace AirPlay.Listeners
                             await mirroring.StartAsync(cancellationToken).ConfigureAwait(false);
 
                             session.MirroringListener = mirroring;
+                            _receiver.OnMirroringStarted();
                         }
                         if (session.FairPlayReady && (!session.MirroringSession.HasValue || !session.MirroringSession.Value))
                         {
@@ -612,6 +613,7 @@ namespace AirPlay.Listeners
                             session.SpsPps = null;
                             session.StreamConnectionId = null;
                             session.MirroringSession = null;
+                            _receiver.OnMirroringStopped();
                         }
                         // If audio session
                         if (type == 96)

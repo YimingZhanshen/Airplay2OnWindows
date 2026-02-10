@@ -11,5 +11,7 @@ namespace AirPlay
         void OnData(H264Data data);
         void OnPCMData(PcmData data);
         void OnAudioFlush();
+        void OnMirroringStarted();
+        void OnMirroringStopped();
     }
 }

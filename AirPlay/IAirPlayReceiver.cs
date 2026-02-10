@@ -11,6 +11,8 @@ namespace AirPlay
         event EventHandler<H264Data> OnH264DataReceived;
         event EventHandler<PcmData> OnPCMDataReceived;
         event EventHandler OnAudioFlushReceived;
+        event EventHandler OnMirroringStartedReceived;
+        event EventHandler OnMirroringStoppedReceived;
 
         Task StartListeners(CancellationToken cancellationToken);
 
