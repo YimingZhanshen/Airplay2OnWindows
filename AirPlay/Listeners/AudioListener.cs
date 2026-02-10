@@ -484,6 +484,15 @@ namespace AirPlay.Listeners
             File.WriteAllBytes($"{fPath}raw_{seqnum}", raw);
 #endif
             /* RAW -> PCM */
+            if (_queueCallCount <= 5 || _queueCallCount % 500 == 0)
+            {
+                // Log first bytes of decrypted payload for verification
+                // Valid AAC-ELD frames start with: 0x8c, 0x8d, 0x8e, 0x80, 0x81, 0x82, 0x20
+                var hexDump = raw.Length >= 16 
+                    ? BitConverter.ToString(raw, 0, Math.Min(16, raw.Length)) 
+                    : BitConverter.ToString(raw);
+                Console.WriteLine($"[DEBUG-DECRYPT] #{_queueCallCount}: raw[0]=0x{raw[0]:X2}, len={raw.Length}, first16={hexDump}");
+            }
             var length = _decoder.GetOutputStreamLength();
             var output = new byte[length];
 
@@ -491,7 +500,8 @@ namespace AirPlay.Listeners
             if (res != 0)
             {
                 output = new byte[length];
-                Console.WriteLine($"Decoding error. Decoder: {_decoder.Type} Code: {res}");
+                if (_queueCallCount <= 5 || _queueCallCount % 500 == 0)
+                    Console.WriteLine($"Decoding error. Decoder: {_decoder.Type} Code: {res}");
             }
 
 #if DUMP

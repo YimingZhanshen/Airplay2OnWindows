@@ -275,11 +275,9 @@ namespace AirPlay.Decoders.Implementations
             WriteBits(bits, channels, 4);
 
             // ELD specific config (ISO 14496-3 section 4.4.2.5)
-            // frameLengthFlag: 0=480, 1=512
-            // UxPlay's working ASC (f8e85000) uses frameLengthFlag=1 (512 samples)
-            // even though iOS SETUP sends spf=480. FFmpeg's decoder handles the
-            // actual frame content regardless of this flag.
-            bits.Add(true); // frameLengthFlag = 1
+            // frameLengthFlag: 0=480 samples, 1=512 samples
+            // Must match the actual frame length from iOS SETUP (spf field)
+            bits.Add(frameLength == 512); // frameLengthFlag
 
             // aacSectionDataResilienceFlag
             bits.Add(false);
